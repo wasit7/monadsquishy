@@ -7,10 +7,10 @@ Squishy is a Python package for data transformation using the Monad pattern and 
 ### From PyPI:
 
 ```bash
-pip install squishy
+pip install monadsquishy
 ```
 
 ### From github
 ```bash
-pip install git+https://github.com/wasit7/squishy.git
+pip install git+https://github.com/wasit7/monadsquishy.git
 ```

@@ -1,0 +1,32 @@
+Metadata-Version: 2.1
+Name: monadsquishy
+Version: 0.1.3
+Summary: A Python package for squishy data transformation and monads
+Home-page: https://github.com/wasit7/monadsquishy
+Author: Wasit Limprasert
+Author-email: wasit7@gmail.com
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: pandas==2.1.4
+Requires-Dist: pyarrow==17.0.0
+
+# Squishy
+
+Squishy is a Python package for data transformation using the Monad pattern and cleansing operations.
+
+## Installation
+
+### From PyPI:
+
+```bash
+pip install monadsquishy
+```
+
+### From github
+```bash
+pip install git+https://github.com/wasit7/monadsquishy.git
+```

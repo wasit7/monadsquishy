@@ -1,0 +1,12 @@
+LICENSE
+MANIFEST.in
+README.md
+setup.py
+monadsquishy/__init__.py
+monadsquishy/functions.py
+monadsquishy/squishy.py
+monadsquishy.egg-info/PKG-INFO
+monadsquishy.egg-info/SOURCES.txt
+monadsquishy.egg-info/dependency_links.txt
+monadsquishy.egg-info/requires.txt
+monadsquishy.egg-info/top_level.txt
