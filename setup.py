@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="squishy",
+    name="monadsquishy",
     version="0.1.0",
     description="A Python package for squishy data transformation and monads",
     long_description=open("README.md").read(),
