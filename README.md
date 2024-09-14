@@ -1,5 +1,7 @@
 # Squishy
+<img src="https://github.com/wasit7/monadsquishy/blob/main/assets/logo.png" alt="Logo" width="200">
 
+Welcome to the project!
 Squishy is a Python package for data transformation using the Monad pattern and cleansing operations.
 
 ## Installation
