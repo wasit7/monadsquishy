@@ -31,7 +31,7 @@ class Monad:
         for func in funcs:
             monad = monad | func
         if monad.status == 'dirty':
-            monad.value=''
+            monad.value = None
         return monad
 
 class Squishy:
