@@ -86,14 +86,16 @@ class Squishy:
                 df_transformed = self.apply_transformations(_df, in_col, funcs)
                 df_all_transformed[out_col]=df_transformed['value'] # must be string
                 df_exploded = self.explode(df_transformed)
-                df_exploded.insert(1, 'column', in_col)
+                df_exploded.insert(1, 'in_column', in_col)
+                df_exploded.insert(2, 'out_column', out_col)
                 df_all_exploded = pd.concat([df_all_exploded, df_exploded])
             
             # finalizing the report table by exploding the message    
             df_all_exploded = df_all_exploded.reset_index(drop=True)\
                 .rename(columns={
                     "row": "input_row", 
-                    "column": "input_column", 
+                    "in_column": "input_column",
+                    "out_column": "out_column", 
                     "input": "input_value", 
                     "value":"output_value"
                 }, errors="raise")
