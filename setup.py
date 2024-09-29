@@ -20,7 +20,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "pandas==2.1.4",
-        "pyarrow==17.0.0"
+        "pyarrow==17.0.0",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

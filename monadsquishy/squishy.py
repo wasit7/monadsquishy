@@ -72,17 +72,19 @@ class Squishy:
             os.makedirs(path) 
 
     def all_transformations(self, sq_config):
-        all_transformed=[]
-        all_exploded=[]
+        # all_transformed=[]
+        # all_exploded=[]
         for pull in sq_config['transformations']:
             df_all_transformed=pd.DataFrame()
             df_all_exploded=pd.DataFrame()
             _df = pull['input_table']
-            for k,v in pull['out_columns'].items():
+            for i,x in enumerate(pull['out_columns'].items()):
+                k,v=x
                 out_col = k
                 in_col = v['input']
                 funcs = v['funcs']
-                print(f'''input:{in_col[:10]:10} -->{str([ f.__name__ for f in funcs]):40}--> output:{out_col}''')
+                print(f"{i + 1}/{len(pull['out_columns'].items())} Output: {out_col}")
+                print(f'''Input: {in_col[:20]:20} -->{str([ f.__name__ for f in funcs]):200}\n''')
                 df_transformed = self.apply_transformations(_df, in_col, funcs)
                 df_all_transformed[out_col]=df_transformed['value'] # must be string
                 df_exploded = self.explode(df_transformed)
@@ -95,7 +97,7 @@ class Squishy:
                 .rename(columns={
                     "row": "input_row", 
                     "in_column": "input_column",
-                    "out_column": "out_column", 
+                    "out_column": "output_column", 
                     "input": "input_value", 
                     "value":"output_value"
                 }, errors="raise")
@@ -113,9 +115,10 @@ class Squishy:
             df_all_exploded.to_parquet(os.path.join(path,'exploded.parquet'))
 
             # append the global list
-            all_transformed.append(df_all_transformed)
-            all_exploded.append(df_all_exploded)
-        return all_transformed, all_exploded
+            # all_transformed.append(df_all_transformed)
+            # all_exploded.append(df_all_exploded)
+        # return all_transformed, all_exploded
+        print('Finished transformations!')
         
     def run(self):
         return self.all_transformations(self.config)
@@ -130,4 +133,50 @@ class Squishy:
     def log(self, index=0):
         path = self.config['transformations'][index]['exploded_path']
         return pd.read_parquet(os.path.join(path,'exploded.parquet'))
+    
+    def dirty_report(self):
+        df_log = self.log()
+        ## dirty report
+        df_last = df_log.drop_duplicates(['input_row','output_column','input_value'], keep='last')
+        # Filter the dataframe for rows where 'is_passed' is False
+        df_not_passed = df_last[df_last['is_passed'] == False]
 
+        # Create the pivot table to count occurrences of failed rows
+        df_pivot_report = pd.pivot_table(
+            df_not_passed,
+            values='is_passed',  # The value to aggregate
+            index=['input_column', 'output_column', 'input_value'],  # Grouping columns
+            aggfunc='count',  # Aggregate function to count occurrences
+            dropna=False,  # Do not drop missing values
+            # fill_value=None  # Use NaN when there are no values
+        )
+
+        # Resetting the index to flatten the pivot table
+        df_pivot_report = df_pivot_report.reset_index()
+
+        # Renaming the columns for clarity
+        df_pivot_report.columns = ['input_column', 'out_column', 'input_value', 'dirty_count']
+        df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
+        return df_pivot_report
+
+    def clean_report(self):
+        df_log = self.log()
+        ## clean_report
+        df_not_passed = df_log[df_log['is_passed'] == True]
+        # Create the pivot table to count occurrences of failed rows
+        df_pivot_report = pd.pivot_table(
+            df_not_passed,
+            values='is_passed',  # The value to aggregate
+            index=['input_column', 'output_column', 'message'],  # Grouping columns
+            aggfunc='count',  # Aggregate function to count occurrences
+            # dropna=False,  # Do not drop missing values
+            fill_value=None  # Use NaN when there are no values
+        )
+
+        # Resetting the index to flatten the pivot table
+        df_pivot_report = df_pivot_report.reset_index()
+
+        # Renaming the columns for clarity
+        df_pivot_report.columns = ['input_column', 'out_column', 'message', 'clean_count']
+        df_pivot_report = df_pivot_report.sort_values(['out_column','clean_count'], ascending=False)
+        return df_pivot_report
