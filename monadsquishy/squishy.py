@@ -76,7 +76,7 @@ class Squishy:
     def all_transformations(self, sq_config):
         # all_transformed=[]
         # all_exploded=[]
-        for pull in sq_config['transformations']:
+        for pull in sq_config.get('transformations',[]):
             df_all_transformed=pd.DataFrame()
             df_all_exploded=pd.DataFrame()
             _df = pull['input_table']
@@ -121,6 +121,12 @@ class Squishy:
             # all_exploded.append(df_all_exploded)
         # return all_transformed, all_exploded
         print('>> Finished transformations!')
+
+        for pull in sq_config.get('generation',[]):
+            # df_all_transformed=pd.DataFrame()
+            df_all_exploded=pd.DataFrame()
+            df_all_transformed = pull['input_table']
+            # chain of thought here
         
     def run(self):
         return self.all_transformations(self.config)
