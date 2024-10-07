@@ -1,5 +1,7 @@
 import os
 import pandas as pd
+from tqdm import tqdm
+tqdm.pandas()
 
 class Monad:
     def __init__(self, value):
@@ -52,7 +54,7 @@ class Squishy:
         """
         df=df[[column_name]].copy()
         df['input']=df[column_name]
-        df['monad_result'] = df[column_name].apply(lambda x: Monad(x).apply(monad_funcs))
+        df['monad_result'] = df[column_name].progress_apply(lambda x: Monad(x).apply(monad_funcs))
         df_transformed=pd.DataFrame({
             'input':df['input'],
             'value':df['monad_result'].apply(lambda x: x.value),
@@ -84,7 +86,7 @@ class Squishy:
                 in_col = v['input']
                 funcs = v['funcs']
                 print(f"{i + 1}/{len(pull['out_columns'].items())} Output: {out_col}")
-                print(f'''Input: {in_col[:20]:20} -->{str([ f.__name__ for f in funcs]):200}\n''')
+                print(f'''Input: {in_col[:20]:20} -->{str([ f.__name__ for f in funcs]):200}''')
                 df_transformed = self.apply_transformations(_df, in_col, funcs)
                 df_all_transformed[out_col]=df_transformed['value'] # must be string
                 df_exploded = self.explode(df_transformed)
@@ -118,7 +120,7 @@ class Squishy:
             # all_transformed.append(df_all_transformed)
             # all_exploded.append(df_all_exploded)
         # return all_transformed, all_exploded
-        print('Finished transformations!')
+        print('>> Finished transformations!')
         
     def run(self):
         return self.all_transformations(self.config)
@@ -134,8 +136,11 @@ class Squishy:
         path = self.config['transformations'][index]['exploded_path']
         return pd.read_parquet(os.path.join(path,'exploded.parquet'))
     
-    def dirty_report(self):
-        df_log = self.log()
+    def get_output_column(self, index=0):
+        return self.config['transformations'][index]['out_columns']
+    
+    def dirty_report(self, index=0):
+        df_log = self.log(index)
         ## dirty report
         df_last = df_log.drop_duplicates(['input_row','output_column','input_value'], keep='last')
         # Filter the dataframe for rows where 'is_passed' is False
@@ -155,12 +160,16 @@ class Squishy:
         df_pivot_report = df_pivot_report.reset_index()
 
         # Renaming the columns for clarity
-        df_pivot_report.columns = ['input_column', 'out_column', 'input_value', 'dirty_count']
-        df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
-        return df_pivot_report
+        df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_count']
+        # df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
+        df=df_pivot_report
+        order=self.get_output_column(index)
+        df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
+        df_sorted = df.sort_values(by=['output_column','dirty_count'])
+        return df_sorted
 
-    def clean_report(self):
-        df_log = self.log()
+    def clean_report(self, index=0):
+        df_log = self.log(index)
         ## clean_report
         df_not_passed = df_log[df_log['is_passed'] == True]
         # Create the pivot table to count occurrences of failed rows
@@ -177,6 +186,10 @@ class Squishy:
         df_pivot_report = df_pivot_report.reset_index()
 
         # Renaming the columns for clarity
-        df_pivot_report.columns = ['input_column', 'out_column', 'message', 'clean_count']
-        df_pivot_report = df_pivot_report.sort_values(['out_column','clean_count'], ascending=False)
-        return df_pivot_report
+        df_pivot_report.columns = ['input_column', 'output_column', 'message', 'clean_count']
+        # df_pivot_report = df_pivot_report.sort_values(['out_column','clean_count'], ascending=False)
+        df=df_pivot_report
+        order=self.get_output_column(index)
+        df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
+        df_sorted = df.sort_values(by=['output_column','message'])
+        return df_sorted
