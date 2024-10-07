@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from tqdm import tqdm
-tqdm.pandas()
+tqdm.pandas(ncols=100)
 
 class Monad:
     def __init__(self, value):
@@ -54,7 +54,10 @@ class Squishy:
         """
         df=df[[column_name]].copy()
         df['input']=df[column_name]
-        df['monad_result'] = df[column_name].progress_apply(lambda x: Monad(x).apply(monad_funcs))
+        df['monad_result'] = df[column_name].progress_apply(
+            lambda x: Monad(x).apply(monad_funcs),
+            
+        )
         df_transformed=pd.DataFrame({
             'input':df['input'],
             'value':df['monad_result'].apply(lambda x: x.value),
@@ -86,7 +89,7 @@ class Squishy:
                 in_col = v['input']
                 funcs = v['funcs']
                 print(f"{i + 1}/{len(pull['out_columns'].items())} Output: {out_col}")
-                print(f'''Input: {in_col[:20]:20} -->{str([ f.__name__ for f in funcs]):200}''')
+                print(f'''Input: {in_col[:20]:20}\nProcess: {str([ f.__name__ for f in funcs])}''')
                 df_transformed = self.apply_transformations(_df, in_col, funcs)
                 df_all_transformed[out_col]=df_transformed['value'] # must be string
                 df_exploded = self.explode(df_transformed)

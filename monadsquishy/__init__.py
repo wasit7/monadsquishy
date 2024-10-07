@@ -1,7 +1,7 @@
 # monadsquishy/__init__.py
 
 __title__ = 'DigitalStoreMesh Services'
-__version__ = '0.1.11'
+__version__ = '0.1.12'
 __author__ = 'Wasit Limprasert'
 __license__ = 'MIT'
 
