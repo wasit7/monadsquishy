@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from tqdm import tqdm
+from tqdm.auto import tqdm
 tqdm.pandas(ncols=100)
 
 class Monad:
