@@ -1,8 +1,8 @@
 import os
 import pandas as pd
 from tqdm.auto import tqdm
-tqdm.pandas(ncols=100)
-
+# tqdm.pandas(ncols=100)
+tqdm.pandas()
 class Monad:
     def __init__(self, value):
         self.value = value
