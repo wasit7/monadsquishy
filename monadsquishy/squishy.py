@@ -1,8 +1,10 @@
 import os
+import json
+import datetime
 import pandas as pd
 from tqdm.auto import tqdm
+
 from . import utils
-import json
 
 tqdm.pandas()
 class Monad:
@@ -266,7 +268,7 @@ class Squishy:
         df_report = self.report(table_name=table_name)
 
         base_path = f"{self.bucket_config.get('bucket', '')}/{self.config.get('state')}"
-        path = f"{base_path}/{table_name}.parquet"
+        path = f"{base_path}/{table_name}_{datetime.datetime.now().strftime("%Y-%m-%d")}.parquet"
         print(f"\t save data to {path}")
         df_output.to_parquet(
             path,
@@ -275,7 +277,7 @@ class Squishy:
         )
         print(f"\t save data done!")
 
-        path = f"{base_path}/{table_name}-report.json"
+        path = f"{base_path}/{table_name}_{datetime.datetime.now().strftime("%Y-%m-%d")}-report.json"
         print(f"\t save report to {path}")
         with self.bucket.open(path, 'w') as f:
             f.write(json.dumps(df_report.to_dict('records')))
