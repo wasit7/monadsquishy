@@ -32,6 +32,13 @@ df = pd.read_parquet('./simple.parquet')
 ### Setup transformation cofig
 ```python
 sq_config = {
+    'state': 'test',
+    'bucket_config':{
+        'bucket': '',
+        'key': '',
+        'secret': '',
+        'endpoint_url': 'https://storage.googleapis.com',
+    },
     'transformations':[
         {
             'input_table': df,
@@ -72,7 +79,7 @@ sq_config = {
 
 
 ```python
-sq=Squishy(sq_config)
+sq = Squishy(sq_config)
 sq.run()
 ```
 
@@ -108,7 +115,6 @@ sq.output()
 ```python
 sq.log()
 ```
-
 | input_row | input_column | input_value      | output_value  | is_passed | message                                      |
 |-----------|--------------|------------------|---------------|-----------|----------------------------------------------|
 | 0         | country       | TH               | TH            | True      | Passed: country1()                           |
@@ -149,3 +155,27 @@ sq.log()
 | 35        | price         | 1,025.99 THB     | THB           | True      | Passed:
 
 
+### Show dataframe report log
+```python
+sq.report(table_name='simple')
+```
+
+|                | Table   | Field          |   clean |   dirty |   missing_data |   clean_percent |   dirty_percent |   missing_data_percent |   completeness_percent |   consistency_percent |
+|:---------------|:--------|:---------------|--------:|--------:|---------------:|----------------:|----------------:|-----------------------:|-----------------------:|----------------------:|
+| country        | simple  | country        |       4 |       1 |              0 |              80 |              20 |                      0 |                    100 |                    80 |
+| name           | simple  | name           |       5 |       0 |              0 |             100 |               0 |                      0 |                    100 |                   100 |
+| order_date     | simple  | order_date     |       5 |       0 |              0 |             100 |               0 |                      0 |                    100 |                   100 |
+| quantity       | simple  | quantity       |       5 |       0 |              0 |             100 |               0 |                      0 |                    100 |                   100 |
+| price_number   | simple  | price_number   |       5 |       0 |              0 |             100 |               0 |                      0 |                    100 |                   100 |
+| price_currency | simple  | price_currency |       5 |       0 |              0 |             100 |               0 |                      0 |                    100 |                   100 |
+### Save dataframe and report to bucket
+```python
+sq.save(table_name='simple')
+```
+
+```
+	 save data to dtn-demo/test/simple.parquet
+	 save data done!
+	 save report to dtn-demo/test/simple-report.json
+	 save report done!
+```

@@ -1,7 +1,9 @@
 import os
 import pandas as pd
 from tqdm.auto import tqdm
-# tqdm.pandas(ncols=100)
+from . import utils
+import json
+
 tqdm.pandas()
 class Monad:
     def __init__(self, value):
@@ -39,6 +41,18 @@ class Monad:
 class Squishy:
     def __init__(self, config):
         self.config = config
+        if config.get('bucket_config'):
+            bucket_config = config.get('bucket_config')
+            bucket_config.update({
+                'anon': False,
+                'use_listings_cache': False,
+                'default_fill_cache': False,
+                'config_kwargs': {
+                    'signature_version': 's3v4'
+                }
+            })
+            self.bucket_config = bucket_config
+            self.bucket = utils.bucket.CustomS3filesystem(**{k:v for k,v in self.bucket_config.items() if k not in ['bucket']})
         
     def apply_transformations(self, df, column_name, monad_funcs):
         """
@@ -52,8 +66,8 @@ class Squishy:
         Returns:
         - pd.DataFrame: a dataframe with transformation results in a new column 'result'.
         """
-        df=df[[column_name]].copy()
-        df['input']=df[column_name]
+        df = df[[column_name]].copy()
+        df['input'] = df[column_name]
         df['monad_result'] = df[column_name].progress_apply(
             lambda x: Monad(x).apply(monad_funcs),
             
@@ -72,16 +86,16 @@ class Squishy:
         df_exploded.insert(3, 'is_passed', df_exploded.message.str.match("Passed:"))
         # df_exploded['is_passed']=df_exploded.message.str.match("Passed:")
         return df_exploded
+    
     def create_dir(self, path):
-        if not os.path.exists(path): 
-            os.makedirs(path) 
-
+        os.makedirs(path, exist_ok=True)
+            
     def all_transformations(self, sq_config):
         # all_transformed=[]
         # all_exploded=[]
         for pull in sq_config.get('transformations',[]):
-            df_all_transformed=pd.DataFrame()
-            df_all_exploded=pd.DataFrame()
+            df_all_transformed = pd.DataFrame()
+            df_all_exploded = pd.DataFrame()
             _df = pull['input_table']
             for i,x in enumerate(pull['out_columns'].items()):
                 k,v=x
@@ -115,8 +129,8 @@ class Squishy:
             # save transformed table to file
             path = pull['exploded_path']
             self.create_dir(path)
-            df_all_exploded['input_value']=df_all_exploded['input_value'].astype(str)
-            df_all_exploded['output_value']=df_all_exploded['output_value'].astype(str)
+            df_all_exploded['input_value'] = df_all_exploded['input_value'].astype(str)
+            df_all_exploded['output_value'] = df_all_exploded['output_value'].astype(str)
             df_all_exploded.to_parquet(os.path.join(path,'exploded.parquet'))
 
             # append the global list
@@ -171,8 +185,8 @@ class Squishy:
         # Renaming the columns for clarity
         df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_count']
         # df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
-        df=df_pivot_report
-        order=self.get_output_column(index)
+        df = df_pivot_report
+        order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
         df_sorted = df.sort_values(by=['output_column','dirty_count'])
         return df_sorted
@@ -197,8 +211,72 @@ class Squishy:
         # Renaming the columns for clarity
         df_pivot_report.columns = ['input_column', 'output_column', 'message', 'clean_count']
         # df_pivot_report = df_pivot_report.sort_values(['out_column','clean_count'], ascending=False)
-        df=df_pivot_report
-        order=self.get_output_column(index)
+        df = df_pivot_report
+        order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column','message'])
+        df_sorted = df.sort_values(by=['output_column', 'message'])
         return df_sorted
+    
+    def report(self, table_name):
+        """_summary_
+
+        Args:
+            table_name (str): table name
+
+        Returns:
+            pd.DataFrame: report dataframe
+        """
+        df = self.output()
+        op_len = len(df)
+        
+        # Calculate null values, missing values, and clean values for each column
+        null_data = df.isna().sum()
+        missing_data = (df == "MISSING_DATA").sum()
+        clean_data = op_len - null_data - missing_data
+
+        # Calculate percentages
+        null_data_percent = (null_data / op_len * 100).round(2)
+        missing_data_percent = (missing_data / op_len * 100).round(2)
+        clean_data_percent = (clean_data / op_len * 100).round(2)
+        
+        # Calculate completeness and consistency percentages
+        complete_percent = (clean_data_percent + null_data_percent).round(2)
+        consis_percent = (clean_data_percent + missing_data_percent).round(2)
+
+        # Create the resulting DataFrame
+        check_df = pd.DataFrame({
+            "Table": table_name,
+            "Field": df.columns,
+            "clean": clean_data,
+            "dirty": null_data,
+            "missing_data": missing_data,
+            "clean_percent": clean_data_percent,
+            "dirty_percent": null_data_percent,
+            "missing_data_percent": missing_data_percent,
+            "completeness_percent": complete_percent,
+            "consistency_percent": consis_percent
+        })
+        
+        return check_df
+    
+    def save(self, table_name):
+        if getattr(self, 'bucket_config', None) == None:
+            raise Exception("Please config `osd_config` before .save()")
+        df_output = self.output()
+        df_report = self.report(table_name=table_name)
+
+        base_path = f"{self.bucket_config.get('bucket', '')}/{self.config.get('state')}"
+        path = f"{base_path}/{table_name}.parquet"
+        print(f"\t save data to {path}")
+        df_output.to_parquet(
+            path,
+            filesystem=self.bucket,
+            engine='pyarrow'
+        )
+        print(f"\t save data done!")
+
+        path = f"{base_path}/{table_name}-report.json"
+        print(f"\t save report to {path}")
+        with self.bucket.open(path, 'w') as f:
+            f.write(json.dumps(df_report.to_dict('records')))
+        print(f"\t save report done!")

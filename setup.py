@@ -21,6 +21,7 @@ setup(
     install_requires=[
         "pandas==2.1.4",
         "pyarrow==17.0.0",
+        "s3fs"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
