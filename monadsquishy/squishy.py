@@ -277,7 +277,7 @@ class Squishy:
         )
         print(f"\t save data done!")
 
-        path = f"{base_path}/{table_name}_{datetime.datetime.now().strftime("%Y-%m-%d")}-report.json"
+        path = f"{base_path}/{table_name}_{datetime.datetime.now().strftime('%Y-%m-%d')}-report.json"
         print(f"\t save report to {path}")
         with self.bucket.open(path, 'w') as f:
             f.write(json.dumps(df_report.to_dict('records')))
