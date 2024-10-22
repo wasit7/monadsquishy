@@ -268,7 +268,7 @@ class Squishy:
         df_report = self.report(table_name=table_name)
 
         base_path = f"{self.bucket_config.get('bucket', '')}/{self.config.get('state')}"
-        path = f"{base_path}/{table_name}_{datetime.datetime.now().strftime("%Y-%m-%d")}.parquet"
+        path = f"{base_path}/{table_name}_{datetime.datetime.now().strftime('%Y-%m-%d')}.parquet"
         print(f"\t save data to {path}")
         df_output.to_parquet(
             path,
