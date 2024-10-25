@@ -24,6 +24,7 @@ Please check tutorial notebook [here](./tutorials/simple_transform.ipynb)
 ### load input into a dataframe
 ``` python
 from monadsquishy import Squishy, sf
+from monadsquishy import SquishyDask # if use dask dataframe
 import pandas as pd
 
 df = pd.read_parquet('./simple.parquet')
