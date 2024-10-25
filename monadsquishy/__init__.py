@@ -10,3 +10,4 @@ VERSION = __version__
 from . import functions as sf
 from .squishy import Squishy
 from .squishy import Monad
+from .squishy_dask import SquishyDask
