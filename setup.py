@@ -19,7 +19,7 @@ setup(
     url="https://github.com/wasit7/monadsquishy",
     packages=find_packages(),
     install_requires=[
-        "pandas==2.0",
+        "pandas==2.0.3",
         "pyarrow==17.0.0",
     ],
     classifiers=[
