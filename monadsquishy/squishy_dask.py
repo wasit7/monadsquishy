@@ -5,6 +5,7 @@ import pandas as pd
 from . import utils
 import datetime
 import json
+import pyarrow as pa
 
 ProgressBar().register()  # This will give progress bars for Dask operations
 
