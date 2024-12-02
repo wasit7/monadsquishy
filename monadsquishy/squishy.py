@@ -190,7 +190,7 @@ class Squishy:
         df = df_pivot_report
         order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column','dirty_count'])
+        df_sorted = df.sort_values(by=['output_column','dirty_count'], ascending=False)
         return df_sorted
 
     def clean_report(self, index=0):
@@ -216,7 +216,7 @@ class Squishy:
         df = df_pivot_report
         order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column', 'message'])
+        df_sorted = df.sort_values(by=['output_column', 'message'], ascending=False)
         return df_sorted
     
     def report(self, table_name):
