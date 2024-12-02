@@ -1,11 +1,12 @@
 import os
 import dask.dataframe as dd
 from dask.diagnostics import ProgressBar
-import pandas as pd
-from . import utils
 import datetime
 import json
+import pandas as pd
 import pyarrow as pa
+import numpy as np
+from . import utils
 
 ProgressBar().register()  # This will give progress bars for Dask operations
 
@@ -148,39 +149,55 @@ class SquishyDask:
         path = self.config['transformations'][index]['exploded_path']
         return dd.read_parquet(os.path.join(path, 'exploded.parquet'))
 
+    def get_output_column(self, index=0):
+        return self.config['transformations'][index]['out_columns']
+
     def dirty_report(self, index=0):
         df_log = self.log(index).compute()
-        df_last = df_log.drop_duplicates(['input_row', 'output_column', 'input_value'], keep='last')
+        df_last = df_log.drop_duplicates(['input', 'out_column', 'value'], keep='last')
         df_not_passed = df_last[df_last['is_passed'] == False]
         df_pivot_report = pd.pivot_table(
             df_not_passed,
             values='is_passed',
-            index=['input_column', 'output_column', 'input_value'],
+            index=['in_column', 'out_column', 'value'],
             aggfunc='count'
         ).reset_index()
-        df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_count']
+        if df_pivot_report.empty : 
+            df_pivot_report['dirty_count'] = 0
+            return df_pivot_report
+        df_pivot_report.columns = ['in_column', 'out_column', 'value', 'dirty_count']
         df = df_pivot_report
         order = self.get_output_column(index)
-        df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column', 'dirty_count'])
+        df['out_column'] = pd.Categorical(df['out_column'], categories=order, ordered=True)
+        df_sorted = df.sort_values(by=['out_column', 'dirty_count'])
         return df_sorted
+
 
     def clean_report(self, index=0):
         df_log = self.log(index).compute()
+        
+        df_log['in_column'] = df_log['in_column'].apply(lambda x: tuple(x) if isinstance(x, np.ndarray) else x)
+        df_log['out_column'] = df_log['out_column'].apply(lambda x: tuple(x) if isinstance(x, np.ndarray) else x)
+        df_log['message'] = df_log['message'].apply(lambda x: tuple(x) if isinstance(x, np.ndarray) else x)
+        
         df_not_passed = df_log[df_log['is_passed'] == True]
         df_pivot_report = pd.pivot_table(
             df_not_passed,
             values='is_passed',
-            index=['input_column', 'output_column', 'message'],
+            index=['in_column', 'out_column', 'message'],
             aggfunc='count',
             fill_value=None
         ).reset_index()
-        df_pivot_report.columns = ['input_column', 'output_column', 'message', 'clean_count']
+        if df_pivot_report.empty : 
+            df_pivot_report['clean_count'] = 0
+            return df_pivot_report
+        df_pivot_report.columns = ['in_column', 'out_column', 'message', 'clean_count']
         df = df_pivot_report
-        order = self.get_output_column(index)
-        df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column', 'message'])
+        order = self.get_output_column(index) 
+        df['out_column'] = pd.Categorical(df['out_column'], categories=order, ordered=True)
+        df_sorted = df.sort_values(by=['out_column', 'message'])
         return df_sorted
+    
     def report(self, table_name):
         """_summary_
 
