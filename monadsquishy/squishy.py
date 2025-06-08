@@ -40,9 +40,14 @@ class Monad:
             monad.value = None
         return monad
 
+allow_state = {'test', 'landing','staging','integration', 'mart'}
+
+
 class Squishy:
     def __init__(self, config):
         self.config = config
+        if (config.get('state', None) in allow_state) == False:
+            raise Exception(f"state must be {allow_state}")
         if config.get('bucket_config'):
             bucket_config = config.get('bucket_config')
             bucket_config.update({
@@ -261,24 +266,74 @@ class Squishy:
         
         return check_df
     
+    def _generate_metrics_report(self, table_name: str) -> pd.DataFrame:
+        df = self.output()
+        state = self.config.get("state")
+        now = pd.Timestamp.now()
+
+        if state == 'landing':
+            # Count duplicates across all columns
+            duplicate_count = df.duplicated().sum()
+            return pd.DataFrame([{
+                'name': table_name,
+                'timestamp': now,
+                'duplicate_count': duplicate_count
+            }])
+
+        elif state == 'staging':
+            total_rows = len(df)
+            report = {
+                'name': table_name,
+                'timestamp': now,
+                'completeness': 100 * (1 - df.isnull().sum().mean() / total_rows),
+                'validation': 100 * (df.ne("INVALID").sum().mean() / total_rows),
+                'consistency': 100 * (df.apply(lambda col: col.map(type).nunique() <= 1).mean()),
+                'schema': 100.0  # You can plug in schema matching logic if needed
+            }
+            return pd.DataFrame([report])
+
+        elif state == 'integration':
+            # Example logic: assume you already know which cols should be deduped/joined
+            duplicate_rate = 100 * (1 - df.duplicated().sum() / len(df))
+            join_accuracy = 95.0  # Mocked value, adjust per real logic
+            return pd.DataFrame([{
+                'name': table_name,
+                'timestamp': now,
+                'duplicate_rate': duplicate_rate,
+                'join_accuracy': join_accuracy
+            }])
+
+        else:
+            raise Exception(f"Unsupported state for report: {state}")
+    
     def save(self, table_name):
-        if getattr(self, 'bucket_config', None) == None:
+        if getattr(self, 'bucket_config', None) is None:
             raise Exception("Please config `osd_config` before .save()")
+
         df_output = self.output()
-        df_report = self.report(table_name=table_name)
 
         base_path = f"{self.bucket_config.get('bucket', '')}/{self.config.get('state')}"
-        path = f"{base_path}/{table_name}_{datetime.datetime.now().strftime('%Y-%m-%d')}.parquet"
-        print(f"\t save data to {path}")
+        date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+
+        # Save output table
+        output_path = f"{base_path}/{table_name}_{date_str}.parquet"
+        print(f"\t saving transformed data to {output_path}")
         df_output.to_parquet(
-            path,
+            output_path,
             filesystem=self.bucket,
             engine='pyarrow'
         )
-        print(f"\t save data done!")
 
-        path = f"{base_path}/{table_name}_{datetime.datetime.now().strftime('%Y-%m-%d')}-report.json"
-        print(f"\t save report to {path}")
-        with self.bucket.open(path, 'w') as f:
-            f.write(json.dumps(df_report.to_dict('records')))
-        print(f"\t save report done!")
+        # Generate metrics report depending on state
+        df_report = self._generate_metrics_report(df_output, table_name)
+
+        # Save report as Parquet
+        report_path = f"{base_path}/_meta/{table_name}_{date_str}-report.parquet"
+        print(f"\t saving report to {report_path}")
+        df_report.to_parquet(
+            report_path,
+            filesystem=self.bucket,
+            engine='pyarrow'
+        )
+
+        print(f"\t save done!")
