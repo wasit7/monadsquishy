@@ -266,8 +266,7 @@ class Squishy:
         
         return check_df
     
-    def _generate_metrics_report(self, table_name: str) -> pd.DataFrame:
-        df = self.output()
+    def _generate_metrics_report(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
         state = self.config.get("state")
         now = pd.Timestamp.now()
 
@@ -286,7 +285,7 @@ class Squishy:
                 'name': table_name,
                 'timestamp': now,
                 'completeness': 100 * (1 - df.isnull().sum().mean() / total_rows),
-                'validation': 100 * (df.ne("INVALID").sum().mean() / total_rows),
+                'validation': 100 * (df.ne("Failed").sum().mean() / total_rows),
                 'consistency': 100 * (df.apply(lambda col: col.map(type).nunique() <= 1).mean()),
                 'schema': 100.0  # You can plug in schema matching logic if needed
             }
