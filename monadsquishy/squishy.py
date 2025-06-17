@@ -3,6 +3,7 @@ import json
 import datetime
 import pandas as pd
 from tqdm.auto import tqdm
+from typing import Dict, Any, Callable, List
 
 from . import utils
 
@@ -40,6 +41,109 @@ class Monad:
             monad.value = None
         return monad
 
+class DataQualityFramework:
+    """
+    Implements the data quality metric calculations as defined in the 
+    Initial Data Quality Framework document. This class serves as the core
+    calculation engine.
+    """
+
+    def _calculate_rate(self, numerator: int, denominator: int) -> float:
+        """Helper function to safely calculate a percentage rate."""
+        if denominator == 0:
+            return 100.0 if numerator == 0 else 0.0
+        return round((numerator / denominator) * 100, 2)
+
+    def calculate_landing_zone_metrics(self, df: pd.DataFrame, subset: List[str] = None) -> Dict[str, Any]:
+        """Calculates Duplicate Count and Rate."""
+        total_rows = len(df)
+        duplicate_count = df.duplicated(subset=subset).sum()
+        unique_count = total_rows - duplicate_count
+        unique_rate_percent = self._calculate_rate(unique_count, total_rows)
+        return {
+            "unique_count": unique_count,
+            "uniqueness": unique_rate_percent
+        }
+
+    def calculate_staging_zone_metrics(self, df: pd.DataFrame, consistency_rules: Dict[str, Callable], expected_schema: Dict[str, str]) -> Dict[str, Any]:
+        """Calculates all specified metrics for the Staging Zone."""
+        total_rows = len(df)
+        
+        # 1. Completeness 
+        total_fields = total_rows * len(df.columns)
+        non_null_fields = df.notna().sum().sum()
+        completeness_percent = self._calculate_rate(non_null_fields, total_fields)
+
+        # 2. Consistency 
+        def check_row_consistency(row):
+            for col, rule_func in consistency_rules.items():
+                if not rule_func(row[col]):
+                    return False
+            return True
+        passed_consistency = df.apply(check_row_consistency, axis=1).sum()
+        consistency_percent = self._calculate_rate(passed_consistency, total_rows)
+
+        # 3. Validation Failures 
+        validation_failures = (1 - ((total_rows - passed_consistency)/total_rows) )* 100
+
+        # 4. Schema Compliance 
+        def check_row_schema(row):
+            for col, expected_type in expected_schema.items():
+                if col not in row or pd.isna(row[col]): return False
+                try:
+                    if 'int' in expected_type or 'float' in expected_type: pd.to_numeric(row[col])
+                    elif 'datetime' in expected_type: pd.to_datetime(row[col])
+                except (ValueError, TypeError): return False
+            return True
+        compliant_records = df.apply(check_row_schema, axis=1).sum()
+        schema_compliance_percent = self._calculate_rate(compliant_records, total_rows)
+
+        return {
+            "completeness": completeness_percent,
+            "consistency": consistency_percent,
+            "validation": validation_failures,
+            "schema": schema_compliance_percent
+        }
+
+    def calculate_integration_zone_metrics(self, df_joined: pd.DataFrame, right_table_key_col: str) -> Dict[str, Any]:
+        """
+        Calculates metrics for the Integration Zone.
+
+        - Uniqueness Rate: Percentage of unique rows in the final joined data.
+        - Join Accuracy: Percentage of records from the primary (left) table that successfully joined with the secondary table. 
+        """
+        # 1. Uniqueness Rate (replaces Deduplication Rate)
+        # This measures the uniqueness of the final output data.
+        total_rows = len(df_joined)
+        duplicate_rows = df_joined.duplicated().sum()
+        unique_rows = total_rows - duplicate_rows
+        uniqueness_rate_percent = self._calculate_rate(unique_rows, total_rows)
+
+        # 2. Join Accuracy (logic remains the same)
+        # This calculation is based on the definition of Join Accuracy. 
+        records_attempted_join = len(df_joined)
+        correctly_joined_records = df_joined[right_table_key_col].notna().sum()
+        join_accuracy_percent = self._calculate_rate(correctly_joined_records, records_attempted_join)
+
+        return {
+            "uniqueness": uniqueness_rate_percent,
+            "join_accuracy": join_accuracy_percent,
+        }
+
+    def calculate_datamart_zone_metrics(self, df: pd.DataFrame, anomaly_rules: Dict[str, Callable]) -> Dict[str, Any]:
+        """Calculates metrics for the Data Mart Zone."""
+        total_rows = len(df)
+        
+        # 1. Anomaly Rate 
+        def is_anomalous(row):
+            for rule_func in anomaly_rules.values():
+                if rule_func(row): return True
+            return False
+        anomalous_records = df.apply(is_anomalous, axis=1).sum()
+        anomaly_rate_percent = self._calculate_rate(anomalous_records, total_rows)
+        
+        return {"anomaly_rate_percent": anomaly_rate_percent}
+
 allow_state = {'test', 'landing','staging','integration', 'mart'}
 
 
@@ -60,6 +164,8 @@ class Squishy:
             })
             self.bucket_config = bucket_config
             self.bucket = utils.bucket.CustomS3filesystem(**{k:v for k,v in self.bucket_config.items() if k not in ['bucket']})
+        # Squishy now has an instance of the framework to delegate calculations to.
+        self.dq_framework = DataQualityFramework()
         
     def apply_transformations(self, df, column_name, monad_funcs):
         """
@@ -112,7 +218,9 @@ class Squishy:
                 print(f"{i + 1}/{len(pull['out_columns'].items())} Output: {out_col}")
                 print(f'''Input: {in_col[:20]:20}\nProcess: {str([ f.__name__ for f in funcs])}''')
                 df_transformed = self.apply_transformations(_df, in_col, funcs)
-                df_all_transformed[out_col]=df_transformed['value'] # must be string
+                data = df_transformed['value']
+                if v.get('dtype'): data = data.astype(v.get('dtype'))
+                df_all_transformed[out_col]= data # must be string
                 df_exploded = self.explode(df_transformed)
                 df_exploded.insert(1, 'in_column', in_col)
                 df_exploded.insert(2, 'out_column', out_col)
@@ -150,6 +258,9 @@ class Squishy:
             # df_all_transformed=pd.DataFrame()
             df_all_exploded=pd.DataFrame()
             df_all_transformed = pull['input_table']
+            path = pull['transformed_path']
+            self.create_dir(path)
+            df_all_transformed.to_parquet(os.path.join(path,'transformed.parquet'))
             # chain of thought here
         
     def run(self):
@@ -159,7 +270,12 @@ class Squishy:
         return self.config['transformations'][index]['input_table']
 
     def output(self, index=0):
-        path = self.config['transformations'][index]['transformed_path']
+        _ = self.config.get('transformations') or self.config.get('generation')
+        path = _[index]['transformed_path']
+        if not os.path.exists(path):
+            # Create a dummy dataframe if it doesn't exist for demonstration
+            print(f"Warning: Output file not found at {path}. Creating a dummy empty DataFrame.")
+            return pd.DataFrame()
         return pd.read_parquet(os.path.join(path,'transformed.parquet'))
 
     def log(self, index=0):
@@ -266,44 +382,89 @@ class Squishy:
         
         return check_df
     
+    # def _generate_metrics_report(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
+    #     state = self.config.get("state")
+    #     now = pd.Timestamp.now()
+
+    #     if state == 'landing':
+    #         # Count duplicates across all columns
+    #         duplicate_count = df.duplicated().sum()
+    #         return pd.DataFrame([{
+    #             'name': table_name,
+    #             'timestamp': now,
+    #             'duplicate_count': duplicate_count
+    #         }])
+
+    #     elif state == 'staging':
+    #         total_rows = len(df)
+    #         report = {
+    #             'name': table_name,
+    #             'timestamp': now,
+    #             'completeness': 100 * (1 - df.isnull().sum().mean() / total_rows),
+    #             'validation': 100 * (df.ne("Failed").sum().mean() / total_rows),
+    #             'consistency': 100 * (df.apply(lambda col: col.map(type).nunique() <= 1).mean()),
+    #             'schema': 100.0  # You can plug in schema matching logic if needed
+    #         }
+    #         return pd.DataFrame([report])
+
+    #     elif state == 'integration':
+    #         # Example logic: assume you already know which cols should be deduped/joined
+    #         duplicate_rate = 100 * (1 - df.duplicated().sum() / len(df))
+    #         join_accuracy = 95.0  # Mocked value, adjust per real logic
+    #         return pd.DataFrame([{
+    #             'name': table_name,
+    #             'timestamp': now,
+    #             'duplicate_rate': duplicate_rate,
+    #             'join_accuracy': join_accuracy
+    #         }])
+
+    #     else:
+    #         raise Exception(f"Unsupported state for report: {state}")
+
     def _generate_metrics_report(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
+        """
+        Generates a summary metrics report by delegating calculations to the
+        DataQualityFramework instance. The behavior is controlled by the 'state' 
+        and 'metrics_config' sections of the main configuration.
+        """
         state = self.config.get("state")
-        now = pd.Timestamp.now()
+        metrics_config = self.config.get("metrics_config", {})
+        now = pd.Timestamp.now(tz='UTC')
+        
+        report_data = {'name': table_name, 'timestamp': now, 'total_rows': len(df)}
+        metrics = {}
+
+        print(f"\nGenerating '{state}' zone report using DataQualityFramework logic...")
 
         if state == 'landing':
-            # Count duplicates across all columns
-            duplicate_count = df.duplicated().sum()
-            return pd.DataFrame([{
-                'name': table_name,
-                'timestamp': now,
-                'duplicate_count': duplicate_count
-            }])
+            metrics = self.dq_framework.calculate_landing_zone_metrics(df)
 
         elif state == 'staging':
-            total_rows = len(df)
-            report = {
-                'name': table_name,
-                'timestamp': now,
-                'completeness': 100 * (1 - df.isnull().sum().mean() / total_rows),
-                'validation': 100 * (df.ne("Failed").sum().mean() / total_rows),
-                'consistency': 100 * (df.apply(lambda col: col.map(type).nunique() <= 1).mean()),
-                'schema': 100.0  # You can plug in schema matching logic if needed
-            }
-            return pd.DataFrame([report])
+            # These rules must be defined in the run configuration
+            consistency_rules = metrics_config.get('consistency_rules', {})
+            expected_schema = metrics_config.get('expected_schema', {})
+            if not consistency_rules or not expected_schema:
+                raise ValueError("Staging report requires 'consistency_rules' and 'expected_schema' in metrics_config")
+            metrics = self.dq_framework.calculate_staging_zone_metrics(df, consistency_rules, expected_schema)
 
         elif state == 'integration':
-            # Example logic: assume you already know which cols should be deduped/joined
-            duplicate_rate = 100 * (1 - df.duplicated().sum() / len(df))
-            join_accuracy = 95.0  # Mocked value, adjust per real logic
-            return pd.DataFrame([{
-                'name': table_name,
-                'timestamp': now,
-                'duplicate_rate': duplicate_rate,
-                'join_accuracy': join_accuracy
-            }])
+            # The Integration Zone focuses on the success of deduplication and join operations.
+            # This metric has been updated to check the uniqueness of the final joined data.
+            right_table_key = metrics_config.get('right_table_key_col')
+            metrics = self.dq_framework.calculate_integration_zone_metrics(df, right_table_key)
+
+        elif state == 'mart':
+            # This state requires anomaly detection rules
+            anomaly_rules = metrics_config.get('anomaly_rules', {})
+            if not anomaly_rules:
+                raise ValueError("Mart report requires 'anomaly_rules' in metrics_config")
+            metrics = self.dq_framework.calculate_datamart_zone_metrics(df, anomaly_rules)
 
         else:
-            raise Exception(f"Unsupported state for report: {state}")
+            raise Exception(f"Unsupported state for report generation: {state}")
+        
+        report_data.update(metrics)
+        return pd.DataFrame([report_data])
     
     def save(self, table_name):
         if getattr(self, 'bucket_config', None) is None:
@@ -315,7 +476,7 @@ class Squishy:
         date_str = datetime.datetime.now().strftime('%Y-%m-%d')
 
         # Save output table
-        output_path = f"{base_path}/{table_name}_{date_str}.parquet"
+        output_path = f"{base_path}/{table_name}/{date_str}.parquet"
         print(f"\t saving transformed data to {output_path}")
         df_output.to_parquet(
             output_path,
