@@ -16,14 +16,20 @@ class Monad:
         self.dtype = object
 
     def __or__(self, func):
-        if self.status == 'dirty':  # Only process if 'dirty'
+        if self.status == 'dirty' and self.status != 'missing': # Only process if 'dirty' and not 'missing'
             try:
                 x = func(self.value)
-                self.value = x
-                self.status = 'passed'
-                self.message.append(f'Passed: {func.__name__}()')
+                if x is not None: # Process for Passed data
+                    self.value = x
+                    self.status = 'passed'
+                    self.message.append(f'Passed: {func.__name__}()')
+                else: # Process for Missing data
+                    self.value = None
+                    self.status = 'missing'
+                    self.message.append(f'Missing: {func.__name__}()')
                 return self
             except Exception as e:
+                self.value = self.value
                 self.message.append(f'Failed: {func.__name__}(): {str(e)}')
         return self
 
@@ -37,8 +43,6 @@ class Monad:
         monad = self
         for func in funcs:
             monad = monad | func
-        if monad.status == 'dirty':
-            monad.value = None
         return monad
 
 class DataQualityFramework:
@@ -65,38 +69,78 @@ class DataQualityFramework:
             "uniqueness": unique_rate_percent
         }
 
-    def calculate_staging_zone_metrics(self, df: pd.DataFrame, consistency_rules: Dict[str, Callable], expected_schema: Dict[str, str]) -> Dict[str, Any]:
+    def calculate_staging_zone_metrics(self, df: pd.DataFrame, validate_score: pd.Series, consistency_rules: Dict[str, Callable], expected_schema: Dict[str, str]) -> Dict[str, Any]:
         """Calculates all specified metrics for the Staging Zone."""
         total_rows = len(df)
-        
+        total_cols = len(df.columns)
+        total_fields = total_rows * total_cols
+
         # 1. Completeness 
-        total_fields = total_rows * len(df.columns)
         non_null_fields = df.notna().sum().sum()
         completeness_percent = self._calculate_rate(non_null_fields, total_fields)
 
         # 2. Consistency 
         def check_row_consistency(row):
-            for col, rule_func in consistency_rules.items():
-                if not rule_func(row[col]):
-                    return False
-            return True
-        passed_consistency = df.apply(check_row_consistency, axis=1).sum()
-        consistency_percent = self._calculate_rate(passed_consistency, total_rows)
+            result = {}
+            rules = consistency_rules  # ensure it's a dict
+            for col in row.index:
+                if col in rules:
+                    rule_func = rules[col]
+                    result[col] = rule_func(row[col])
+                else:
+                    result[col] = True  # If there's no rule define, Set True
+            return pd.Series(result)
+                
+        passed_consistency = df.apply(check_row_consistency, axis=1).sum().sum()
+        consistency_percent = self._calculate_rate(passed_consistency, total_fields)
 
         # 3. Validation Failures 
-        validation_failures = (1 - ((total_rows - passed_consistency)/total_rows) )* 100
+        # validation_failures = (1 - ((total_rows - passed_consistency)/total_rows) )* 100
+        passed_validate = validate_score.sum().sum()
+        validation_failures = self._calculate_rate(passed_validate, total_fields)
 
         # 4. Schema Compliance 
+        # def check_row_schema(row):
+        #     for col, expected_type in expected_schema.items():
+        #         if col not in row or pd.isna(row[col]): return False
+        #         try:
+        #             if 'int' in expected_type or 'float' in expected_type: pd.to_numeric(row[col])
+        #             elif 'datetime' in expected_type: pd.to_datetime(row[col])
+        #         except (ValueError, TypeError): return False
+        #     return True
         def check_row_schema(row):
-            for col, expected_type in expected_schema.items():
-                if col not in row or pd.isna(row[col]): return False
-                try:
-                    if 'int' in expected_type or 'float' in expected_type: pd.to_numeric(row[col])
-                    elif 'datetime' in expected_type: pd.to_datetime(row[col])
-                except (ValueError, TypeError): return False
-            return True
-        compliant_records = df.apply(check_row_schema, axis=1).sum()
-        schema_compliance_percent = self._calculate_rate(compliant_records, total_rows)
+            result = {}
+            for col in row.index:
+                val = row[col]
+                expected_type = expected_schema.get(col)
+
+                # Fast null / missing check
+                if expected_type is None or val is pd.NA or val is None or (isinstance(val, float) and pd.isna(val)):
+                    result[col] = False
+                    continue
+
+                if expected_type == 'string':
+                    result[col] = isinstance(val, str)
+                elif expected_type == 'int':
+                    result[col] = isinstance(val, int)
+                elif expected_type == 'float':
+                    result[col] = isinstance(val, float)
+                elif expected_type == 'numeric':
+                    result[col] = isinstance(val, (int, float))
+                elif expected_type == 'bool':
+                    result[col] = isinstance(val, bool)
+                elif expected_type == 'datetim64':
+                    if isinstance(val, pd.Timestamp):
+                        result[col] = True
+                    else:
+                        try:
+                            result[col] = pd.to_datetime(val, errors='coerce') is not pd.NaT
+                        except Exception:
+                            result[col] = False
+                            
+            return pd.Series(result)
+        compliant_records = df.apply(check_row_schema, axis=1).sum().sum()
+        schema_compliance_percent = self._calculate_rate(compliant_records, total_fields)
 
         return {
             "completeness": completeness_percent,
@@ -188,7 +232,7 @@ class Squishy:
         df_transformed=pd.DataFrame({
             'input':df['input'],
             'value':df['monad_result'].apply(lambda x: x.value),
-            # 'status':df['monad_result'].apply(lambda x: x.status),
+            'status':df['monad_result'].apply(lambda x: x.status),
             'message':df['monad_result'].apply(lambda x: x.message),
             
         })
@@ -218,8 +262,9 @@ class Squishy:
                 print(f"{i + 1}/{len(pull['out_columns'].items())} Output: {out_col}")
                 print(f'''Input: {in_col[:20]:20}\nProcess: {str([ f.__name__ for f in funcs])}''')
                 df_transformed = self.apply_transformations(_df, in_col, funcs)
-                data = df_transformed['value']
-                if v.get('dtype'): data = data.astype(v.get('dtype'))
+                data = df_transformed['value']                
+                if v.get('dtype'): 
+                    data = data.astype(v.get('dtype'))
                 df_all_transformed[out_col]= data # must be string
                 df_exploded = self.explode(df_transformed)
                 df_exploded.insert(1, 'in_column', in_col)
@@ -290,7 +335,7 @@ class Squishy:
         ## dirty report
         df_last = df_log.drop_duplicates(['input_row','output_column','input_value'], keep='last')
         # Filter the dataframe for rows where 'is_passed' is False
-        df_not_passed = df_last[df_last['is_passed'] == False]
+        df_not_passed = df_last[(df_last['is_passed'] == False) & (df_last['status'] == 'dirty')]
 
         # Create the pivot table to count occurrences of failed rows
         df_pivot_report = pd.pivot_table(
@@ -308,10 +353,10 @@ class Squishy:
         # Renaming the columns for clarity
         df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_count']
         # df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
-        df = df_pivot_report
+        df = df_pivot_report[df_pivot_report['dirty_count'].notna()]
         order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column','dirty_count'], ascending=False)
+        df_sorted = df.sort_values(by=['output_column','dirty_count'], ascending=False).reset_index(drop=True)
         return df_sorted
 
     def clean_report(self, index=0):
@@ -352,18 +397,40 @@ class Squishy:
         df = self.output()
         op_len = len(df)
         
+        # Get dirty report to calculate dirty values
+        df_dirty_report = self.dirty_report()
+        df_dirty_pivot = pd.pivot_table(
+            df_dirty_report,
+            values='dirty_count',
+            index=['input_column'],
+            aggfunc='sum',
+        ).rename(columns={'dirty_count': 'count'})
+        
         # Calculate null values, missing values, and clean values for each column
-        null_data = df.isna().sum()
-        missing_data = (df == "MISSING_DATA").sum()
-        clean_data = op_len - null_data - missing_data
+        # null_data = df.isna().sum()
+        # missing_data = (df == "MISSING_DATA").sum()
+        # clean_data = op_len - null_data - missing_data
+    
+        # Calculate dirty values, missing values, and clean values for each column
+        dirty_df = df_dirty_pivot.reindex(df.columns)
+        dirty_df = dirty_df.squeeze().astype(int)
+        dirty_df.index.name = None
+        dirty_data = dirty_df
+
+        missing_df = df.isna().sum()
+        missing_df = missing_df.to_frame(name='count').squeeze().astype(int)
+        missing_df.index.name = None
+        missing_data = missing_df
+
+        clean_data = op_len - (dirty_data + missing_data)
 
         # Calculate percentages
-        null_data_percent = (null_data / op_len * 100).round(2)
+        dirty_data_percent = (dirty_data / op_len * 100).round(2)
         missing_data_percent = (missing_data / op_len * 100).round(2)
         clean_data_percent = (clean_data / op_len * 100).round(2)
         
         # Calculate completeness and consistency percentages
-        complete_percent = (clean_data_percent + null_data_percent).round(2)
+        complete_percent = (clean_data_percent + dirty_data_percent).round(2)
         consis_percent = (clean_data_percent + missing_data_percent).round(2)
 
         # Create the resulting DataFrame
@@ -371,10 +438,10 @@ class Squishy:
             "Table": table_name,
             "Field": df.columns,
             "clean": clean_data,
-            "dirty": null_data,
+            "dirty": dirty_data,
             "missing_data": missing_data,
             "clean_percent": clean_data_percent,
-            "dirty_percent": null_data_percent,
+            "dirty_percent": dirty_data_percent,
             "missing_data_percent": missing_data_percent,
             "completeness_percent": complete_percent,
             "consistency_percent": consis_percent
@@ -430,7 +497,7 @@ class Squishy:
         state = self.config.get("state")
         metrics_config = self.config.get("metrics_config", {})
         now = pd.Timestamp.now(tz='UTC')
-        
+
         report_data = {'name': table_name, 'timestamp': now, 'total_rows': len(df)}
         metrics = {}
 
@@ -443,9 +510,12 @@ class Squishy:
             # These rules must be defined in the run configuration
             consistency_rules = metrics_config.get('consistency_rules', {})
             expected_schema = metrics_config.get('expected_schema', {})
+            
+            # Get validate score from report
+            validate_score = self.report('table_name')['clean']
             if not consistency_rules or not expected_schema:
                 raise ValueError("Staging report requires 'consistency_rules' and 'expected_schema' in metrics_config")
-            metrics = self.dq_framework.calculate_staging_zone_metrics(df, consistency_rules, expected_schema)
+            metrics = self.dq_framework.calculate_staging_zone_metrics(df, validate_score, consistency_rules, expected_schema)
 
         elif state == 'integration':
             # The Integration Zone focuses on the success of deduplication and join operations.
