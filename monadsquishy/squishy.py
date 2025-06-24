@@ -87,12 +87,12 @@ class DataQualityFramework:
                 if col in rules:
                     rule_func = rules[col]
                     result[col] = rule_func(row[col])
-                else:
-                    result[col] = True  # If there's no rule define, Set True
+                # else:
+                #     result[col] = True  # If there's no rule define, Set True
             return pd.Series(result)
                 
         passed_consistency = df.apply(check_row_consistency, axis=1).sum().sum()
-        consistency_percent = self._calculate_rate(passed_consistency, total_fields)
+        consistency_percent = self._calculate_rate(passed_consistency, len(consistency_rules)*100)
 
         # 3. Validation Failures 
         # validation_failures = (1 - ((total_rows - passed_consistency)/total_rows) )* 100
