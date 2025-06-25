@@ -2,6 +2,7 @@ import os
 import json
 import datetime
 import pandas as pd
+import pyarrow as pa
 from tqdm.auto import tqdm
 from typing import Dict, Any, Callable, List
 
@@ -16,10 +17,10 @@ class Monad:
         self.dtype = object
 
     def __or__(self, func):
-        if self.status == 'dirty' and self.status != 'missing': # Only process if 'dirty' and not 'missing'
+        if 'dirty' == self.status != 'missing': # Only process if 'dirty' and not 'missing'
             try:
                 x = func(self.value)
-                if x is not None: # Process for Passed data
+                if x is not None and pd.notna(x) and x is not pd.NaT: # Process for Passed data
                     self.value = x
                     self.status = 'passed'
                     self.message.append(f'Passed: {func.__name__}()')
@@ -29,7 +30,6 @@ class Monad:
                     self.message.append(f'Missing: {func.__name__}()')
                 return self
             except Exception as e:
-                self.value = self.value
                 self.message.append(f'Failed: {func.__name__}(): {str(e)}')
         return self
 
@@ -95,57 +95,62 @@ class DataQualityFramework:
         consistency_percent = self._calculate_rate(passed_consistency, len(consistency_rules)*100)
 
         # 3. Validation Failures 
-        # validation_failures = (1 - ((total_rows - passed_consistency)/total_rows) )* 100
         passed_validate = validate_score.sum().sum()
         validation_failures = self._calculate_rate(passed_validate, total_fields)
 
         # 4. Schema Compliance 
-        # def check_row_schema(row):
-        #     for col, expected_type in expected_schema.items():
-        #         if col not in row or pd.isna(row[col]): return False
-        #         try:
-        #             if 'int' in expected_type or 'float' in expected_type: pd.to_numeric(row[col])
-        #             elif 'datetime' in expected_type: pd.to_datetime(row[col])
-        #         except (ValueError, TypeError): return False
-        #     return True
-        def check_row_schema(row):
+        def check_column_schema(col):
+            # Mapping from string types to PyArrow types
+            type_map = {
+                'string': pa.string(),
+                'int': pa.int64(),
+                'float': pa.float64(),
+                'bool': pa.bool_(),
+                'datetime': pa.timestamp('ns', tz='UTC')
+            }
+
+            actual_dtype = str(col.dtype)
+            print(f"Column: {col.name}, actual_dtype: {actual_dtype}")
+
+            expected_dtype = type_map.get(expected_schema.get(col.name))
             result = {}
-            for col in row.index:
-                val = row[col]
-                expected_type = expected_schema.get(col)
+            for index, val in enumerate(col):     
+                if pa.types.is_string(expected_dtype):
+                    if not isinstance(val, str) and pd.isna(val):
+                        result[str(index)] = pd.api.types.is_string_dtype(col)
+                        continue
+                    result[str(index)] = True
+                elif pa.types.is_integer(expected_dtype):
+                    if not isinstance(val, int) and pd.isna(val):
+                        result[str(index)] = pd.api.types.is_int64_dtype(col)
+                        continue
+                    result[str(index)] = True
 
-                # Fast null / missing check
-                if expected_type is None or val is pd.NA or val is None or (isinstance(val, float) and pd.isna(val)):
-                    result[col] = False
-                    continue
+                elif pa.types.is_floating(expected_dtype):
+                    if not isinstance(val, float) and pd.isna(val):
+                        result[str(index)] = pd.api.types.is_float_dtype(col)
+                        continue
+                    result[str(index)] = True
 
-                if expected_type == 'string':
-                    result[col] = isinstance(val, str)
-                elif expected_type == 'int':
-                    result[col] = isinstance(val, int)
-                elif expected_type == 'float':
-                    result[col] = isinstance(val, float)
-                elif expected_type == 'numeric':
-                    result[col] = isinstance(val, (int, float))
-                elif expected_type == 'bool':
-                    result[col] = isinstance(val, bool)
-                elif expected_type == 'datetim64':
-                    if isinstance(val, pd.Timestamp):
-                        result[col] = True
-                    else:
-                        try:
-                            result[col] = pd.to_datetime(val, errors='coerce') is not pd.NaT
-                        except Exception:
-                            result[col] = False
-                            
+                elif pa.types.is_boolean(expected_dtype):
+                    if not isinstance(val, bool) and pd.isna(val):
+                        result[str(index)] = pd.api.types.is_bool_dtype(col)
+                        continue
+                    result[str(index)] = True
+                
+                elif pa.types.is_timestamp(expected_dtype):
+                    if not isinstance(val, pd.Timestamp) and pd.isna(val) and (val is pd.NaT):
+                        result[str(index)] = pd.api.types.is_timedelta64_ns_dtype(col)
+                    result[str(index)] = True
+
             return pd.Series(result)
-        compliant_records = df.apply(check_row_schema, axis=1).sum().sum()
+        compliant_records = df.apply(check_column_schema, axis=0).sum().sum()
         schema_compliance_percent = self._calculate_rate(compliant_records, total_fields)
 
         return {
             "completeness": completeness_percent,
-            "consistency": consistency_percent,
             "validation": validation_failures,
+            "consistency": consistency_percent,
             "schema": schema_compliance_percent
         }
 
@@ -281,6 +286,7 @@ class Squishy:
                     "value":"output_value"
                 }, errors="raise")
             # print(df_all_exploded)
+           
             # save transformed table to file
             path = pull['transformed_path']
             self.create_dir(path)
@@ -321,7 +327,7 @@ class Squishy:
             # Create a dummy dataframe if it doesn't exist for demonstration
             print(f"Warning: Output file not found at {path}. Creating a dummy empty DataFrame.")
             return pd.DataFrame()
-        return pd.read_parquet(os.path.join(path,'transformed.parquet'))
+        return pd.read_parquet(os.path.join(path,'transformed.parquet'), dtype_backend='pyarrow')
 
     def log(self, index=0):
         path = self.config['transformations'][index]['exploded_path']
@@ -335,7 +341,7 @@ class Squishy:
         ## dirty report
         df_last = df_log.drop_duplicates(['input_row','output_column','input_value'], keep='last')
         # Filter the dataframe for rows where 'is_passed' is False
-        df_not_passed = df_last[(df_last['is_passed'] == False) & (df_last['status'] == 'dirty')]
+        df_not_passed = df_last[(df_last['is_passed'] == False) & (df_last['status'] == 'dirty')]  # noqa: E712
 
         # Create the pivot table to count occurrences of failed rows
         df_pivot_report = pd.pivot_table(
