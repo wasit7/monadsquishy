@@ -419,7 +419,7 @@ class Squishy:
     
         # Calculate dirty values, missing values, and clean values for each column
         dirty_df = df_dirty_pivot.reindex(df.columns)
-        dirty_df = dirty_df.squeeze().astype(int)
+        dirty_df = dirty_df.squeeze().fillna(0).astype(int)
         dirty_df.index.name = None
         dirty_data = dirty_df
 
