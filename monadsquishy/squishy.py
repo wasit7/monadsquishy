@@ -422,7 +422,9 @@ class Squishy:
         # clean_data = op_len - null_data - missing_data
     
         # Calculate dirty values, missing values, and clean values for each column
-        dirty_df = df_dirty_pivot.reindex(df.columns)
+        dirty_df = df_dirty_pivot.reindex(index=df.columns)
+        if df_dirty_pivot.empty:
+            dirty_df['count'] = 0
         dirty_df = dirty_df.squeeze().fillna(0).astype(int)
         dirty_df.index.name = None
         dirty_data = dirty_df
@@ -547,15 +549,15 @@ class Squishy:
         report_data.update(metrics)
         return pd.DataFrame([report_data])
     
-    def save(self, table_name):
+    def save(self, table_name, date=None):
         if getattr(self, 'bucket_config', None) is None:
             raise Exception("Please config `osd_config` before .save()")
 
         df_output = self.output()
 
         base_path = f"{self.bucket_config.get('bucket', '')}/{self.config.get('state')}"
-        date_str = datetime.datetime.now().strftime('%Y-%m-%d')
-
+        date_str = date if date is not None else datetime.datetime.now().strftime('%Y-%m-%d')
+        
         # Save output table
         output_path = f"{base_path}/{table_name}/{date_str}.parquet"
         print(f"\t saving transformed data to {output_path}")
@@ -577,4 +579,4 @@ class Squishy:
             engine='pyarrow'
         )
 
-        print(f"\t save done!")
+        print("\t save done!")
