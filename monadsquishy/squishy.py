@@ -92,7 +92,7 @@ class DataQualityFramework:
             return pd.Series(result)
                 
         passed_consistency = df.apply(check_row_consistency, axis=1).sum().sum()
-        consistency_percent = self._calculate_rate(passed_consistency, len(consistency_rules)*100)
+        consistency_percent = self._calculate_rate(passed_consistency, len(consistency_rules)*total_rows)
 
         # 3. Validation Failures 
         passed_validate = validate_score.sum().sum()
@@ -110,42 +110,46 @@ class DataQualityFramework:
             }
 
             actual_dtype = str(col.dtype)
-            print(f"Column: {col.name}, actual_dtype: {actual_dtype}")
+            # print(f"Column: {col.name}, actual_dtype: {actual_dtype}")
 
             expected_dtype = type_map.get(expected_schema.get(col.name))
             result = {}
             for index, val in enumerate(col):     
-                if pa.types.is_string(expected_dtype):
-                    if not isinstance(val, str) and pd.isna(val):
-                        result[str(index)] = pd.api.types.is_string_dtype(col)
-                        continue
-                    result[str(index)] = True
-                elif pa.types.is_integer(expected_dtype):
-                    if not isinstance(val, int) and pd.isna(val):
-                        result[str(index)] = pd.api.types.is_int64_dtype(col)
-                        continue
-                    result[str(index)] = True
+                try:
+                    if pa.types.is_string(expected_dtype):
+                        if not isinstance(val, str) and pd.isna(val):
+                            result[str(index)] = pd.api.types.is_string_dtype(col)
+                            continue
+                        result[str(index)] = True
+                    
+                    elif pa.types.is_integer(expected_dtype):
+                        if not isinstance(val, int) and pd.isna(val):
+                            result[str(index)] = pd.api.types.is_int64_dtype(col)
+                            continue
+                        result[str(index)] = True
 
-                elif pa.types.is_floating(expected_dtype):
-                    if not isinstance(val, float) and pd.isna(val):
-                        result[str(index)] = pd.api.types.is_float_dtype(col)
-                        continue
-                    result[str(index)] = True
+                    elif pa.types.is_floating(expected_dtype):
+                        if not isinstance(val, float) and pd.isna(val):
+                            result[str(index)] = pd.api.types.is_float_dtype(col)
+                            continue
+                        result[str(index)] = True
 
-                elif pa.types.is_boolean(expected_dtype):
-                    if not isinstance(val, bool) and pd.isna(val):
-                        result[str(index)] = pd.api.types.is_bool_dtype(col)
-                        continue
-                    result[str(index)] = True
-                
-                elif pa.types.is_timestamp(expected_dtype):
-                    if not isinstance(val, pd.Timestamp) and pd.isna(val) and (val is pd.NaT):
-                        result[str(index)] = pd.api.types.is_timedelta64_ns_dtype(col)
-                    result[str(index)] = True
-
+                    elif pa.types.is_boolean(expected_dtype):
+                        if not isinstance(val, bool) and pd.isna(val):
+                            result[str(index)] = pd.api.types.is_bool_dtype(col)
+                            continue
+                        result[str(index)] = True
+                    
+                    elif pa.types.is_timestamp(expected_dtype):
+                        if not isinstance(val, pd.Timestamp) and pd.isna(val) and (val is pd.NaT):
+                            result[str(index)] = pd.api.types.is_timedelta64_ns_dtype(col)
+                            continue
+                        result[str(index)] = True
+                except Exception:
+                    result[str(index)] = False
             return pd.Series(result)
         compliant_records = df.apply(check_column_schema, axis=0).sum().sum()
-        schema_compliance_percent = self._calculate_rate(compliant_records, total_fields)
+        schema_compliance_percent = self._calculate_rate(compliant_records, total_cols)
 
         return {
             "completeness": completeness_percent,
@@ -359,7 +363,7 @@ class Squishy:
         # Renaming the columns for clarity
         df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_count']
         # df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
-        df = df_pivot_report[df_pivot_report['dirty_count'].notna()]
+        df = df_pivot_report[df_pivot_report['dirty_count'].notna()].copy()
         order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
         df_sorted = df.sort_values(by=['output_column','dirty_count'], ascending=False).reset_index(drop=True)
@@ -385,7 +389,7 @@ class Squishy:
         # Renaming the columns for clarity
         df_pivot_report.columns = ['input_column', 'output_column', 'message', 'clean_count']
         # df_pivot_report = df_pivot_report.sort_values(['out_column','clean_count'], ascending=False)
-        df = df_pivot_report
+        df = df_pivot_report.copy()
         order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
         df_sorted = df.sort_values(by=['output_column', 'message'], ascending=False)
@@ -518,7 +522,8 @@ class Squishy:
             expected_schema = metrics_config.get('expected_schema', {})
             
             # Get validate score from report
-            validate_score = self.report('table_name')['clean']
+            output_report = self.report(table_name)    
+            validate_score = output_report.loc[df.columns]['clean']
             if not consistency_rules or not expected_schema:
                 raise ValueError("Staging report requires 'consistency_rules' and 'expected_schema' in metrics_config")
             metrics = self.dq_framework.calculate_staging_zone_metrics(df, validate_score, consistency_rules, expected_schema)
