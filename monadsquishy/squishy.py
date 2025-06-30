@@ -148,7 +148,7 @@ class DataQualityFramework:
                 except Exception:
                     result[str(index)] = False
             return pd.Series(result)
-        compliant_records = df.apply(check_column_schema, axis=0).sum().sum()
+        compliant_records = df.apply(check_column_schema, axis=0).all().sum()
         schema_compliance_percent = self._calculate_rate(compliant_records, total_cols)
 
         return {
