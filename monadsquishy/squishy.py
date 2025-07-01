@@ -105,49 +105,62 @@ class DataQualityFramework:
                 'string': pa.string(),
                 'int': pa.int64(),
                 'float': pa.float64(),
-                'bool': pa.bool_(),
+                'double': pa.float64(),
+                'boolean': pa.bool_(),
                 'datetime': pa.timestamp('ns', tz='UTC')
             }
 
-            actual_dtype = str(col.dtype)
-            # print(f"Column: {col.name}, actual_dtype: {actual_dtype}")
+            pyarrow_map = {
+                'string[pyarrow]': 'string',
+                'int64[pyarrow]': 'int64',
+                'float64[pyarrow]': 'float64',
+                'double[pyarrow]': 'float64',
+                'bool[pyarrow]': 'bool',
+                'timestamp[ns, tz=UTC][pyarrow]': 'timestamp[ns, tz=UTC]',
+            }
+
+            actual_dtype = pyarrow_map.get(str(col.dtype))
+            # print(f"Column: {col.name}, actual_dtype: {str(col.dtype)}")
 
             expected_dtype = type_map.get(expected_schema.get(col.name))
             result = {}
-            for index, val in enumerate(col):     
-                try:
-                    if pa.types.is_string(expected_dtype):
-                        if not isinstance(val, str) and pd.isna(val):
-                            result[str(index)] = pd.api.types.is_string_dtype(col)
-                            continue
-                        result[str(index)] = True
-                    
-                    elif pa.types.is_integer(expected_dtype):
-                        if not isinstance(val, int) and pd.isna(val):
-                            result[str(index)] = pd.api.types.is_int64_dtype(col)
-                            continue
-                        result[str(index)] = True
+            if actual_dtype == str(expected_dtype):
+                for index, val in enumerate(col):     
+                    try:
+                        if pa.types.is_string(expected_dtype):
+                            if not isinstance(val, str) and pd.isna(val):
+                                result[str(index)] = pd.api.types.is_string_dtype(col)
+                                continue
+                            result[str(index)] = True
+                        
+                        elif pa.types.is_integer(expected_dtype):
+                            if not isinstance(val, int) and pd.isna(val):
+                                result[str(index)] = pd.api.types.is_int64_dtype(col)
+                                continue
+                            result[str(index)] = True
 
-                    elif pa.types.is_floating(expected_dtype):
-                        if not isinstance(val, float) and pd.isna(val):
-                            result[str(index)] = pd.api.types.is_float_dtype(col)
-                            continue
-                        result[str(index)] = True
+                        elif pa.types.is_floating(expected_dtype):
+                            if not isinstance(val, float) and pd.isna(val):
+                                result[str(index)] = pd.api.types.is_float_dtype(col)
+                                continue
+                            result[str(index)] = True
 
-                    elif pa.types.is_boolean(expected_dtype):
-                        if not isinstance(val, bool) and pd.isna(val):
-                            result[str(index)] = pd.api.types.is_bool_dtype(col)
-                            continue
-                        result[str(index)] = True
-                    
-                    elif pa.types.is_timestamp(expected_dtype):
-                        if not isinstance(val, pd.Timestamp) and pd.isna(val) and (val is pd.NaT):
-                            result[str(index)] = pd.api.types.is_timedelta64_ns_dtype(col)
-                            continue
-                        result[str(index)] = True
-                except Exception:
-                    result[str(index)] = False
-            return pd.Series(result)
+                        elif pa.types.is_boolean(expected_dtype):
+                            if not isinstance(val, bool) and pd.isna(val):
+                                result[str(index)] = pd.api.types.is_bool_dtype(col)
+                                continue
+                            result[str(index)] = True
+                        
+                        elif pa.types.is_timestamp(expected_dtype):
+                            if not isinstance(val, pd.Timestamp) and pd.isna(val) and (val is pd.NaT):
+                                result[str(index)] = pd.api.types.is_timedelta64_ns_dtype(col)
+                                continue
+                            result[str(index)] = True
+                    except Exception:
+                        result[str(index)] = False
+                return pd.Series(result)
+            else:
+                return pd.Series([False] * len(col), index=col.index)
         compliant_records = df.apply(check_column_schema, axis=0).all().sum()
         schema_compliance_percent = self._calculate_rate(compliant_records, total_cols)
 
@@ -294,7 +307,7 @@ class Squishy:
             # save transformed table to file
             path = pull['transformed_path']
             self.create_dir(path)
-            df_all_transformed.to_parquet(os.path.join(path,'transformed.parquet'))
+            df_all_transformed.to_parquet(os.path.join(path,'transformed.parquet'), engine='pyarrow')
 
             # save transformed table to file
             path = pull['exploded_path']
