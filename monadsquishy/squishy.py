@@ -581,7 +581,7 @@ class Squishy:
         )
 
         # Generate metrics report depending on state
-        df_report = self._generate_metrics_report(df_output, table_name)
+        df_report = self._generate_metrics_report(df_output, table_name, date_str)
 
         # Save report as Parquet
         report_path = f"{base_path}/_meta/{table_name}_{date_str}-report.parquet"
