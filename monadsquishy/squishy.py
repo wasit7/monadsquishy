@@ -513,7 +513,7 @@ class Squishy:
     #     else:
     #         raise Exception(f"Unsupported state for report: {state}")
 
-    def _generate_metrics_report(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
+    def _generate_metrics_report(self, df: pd.DataFrame, table_name: str, date_str=None) -> pd.DataFrame:
         """
         Generates a summary metrics report by delegating calculations to the
         DataQualityFramework instance. The behavior is controlled by the 'state' 
@@ -521,7 +521,7 @@ class Squishy:
         """
         state = self.config.get("state")
         metrics_config = self.config.get("metrics_config", {})
-        now = pd.Timestamp.now(tz='UTC')
+        now = pd.Timestamp(date_str, tz='UTC') if date_str else pd.Timestamp.now(tz='UTC')
 
         report_data = {'name': table_name, 'timestamp': now, 'total_rows': len(df)}
         metrics = {}
@@ -562,14 +562,14 @@ class Squishy:
         report_data.update(metrics)
         return pd.DataFrame([report_data])
     
-    def save(self, table_name, date=None):
+    def save(self, table_name, date_str=None):
         if getattr(self, 'bucket_config', None) is None:
             raise Exception("Please config `osd_config` before .save()")
 
         df_output = self.output()
 
         base_path = f"{self.bucket_config.get('bucket', '')}/{self.config.get('state')}"
-        date_str = date if date is not None else datetime.datetime.now().strftime('%Y-%m-%d')
+        date_str = date_str if date_str is not None else datetime.datetime.now().strftime('%Y-%m-%d')
         
         # Save output table
         output_path = f"{base_path}/{table_name}/{date_str}.parquet"
