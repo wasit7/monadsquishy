@@ -428,22 +428,17 @@ class Squishy:
             index=['input_column'],
             aggfunc='sum',
         ).rename(columns={'dirty_count': 'count'})
-        
-        # Calculate null values, missing values, and clean values for each column
-        # null_data = df.isna().sum()
-        # missing_data = (df == "MISSING_DATA").sum()
-        # clean_data = op_len - null_data - missing_data
     
         # Calculate dirty values, missing values, and clean values for each column
         dirty_df = df_dirty_pivot.reindex(index=df.columns)
         if df_dirty_pivot.empty:
             dirty_df['count'] = 0
-        dirty_df = dirty_df.squeeze().fillna(0).astype(int)
+        dirty_df = pd.Series(dirty_df['count']).fillna(0).astype(int)
         dirty_df.index.name = None
         dirty_data = dirty_df
 
         missing_df = df.isna().sum()
-        missing_df = missing_df.to_frame(name='count').squeeze().astype(int)
+        missing_df = pd.Series(missing_df.to_frame(name='count')['count']).fillna(0).astype(int)
         missing_df.index.name = None
         missing_data = missing_df
 
@@ -456,7 +451,7 @@ class Squishy:
         
         # Calculate completeness and consistency percentages
         complete_percent = (clean_data_percent + dirty_data_percent).round(2)
-        consis_percent = (clean_data_percent + missing_data_percent).round(2)
+        # consis_percent = (clean_data_percent + missing_data_percent).round(2)
 
         # Create the resulting DataFrame
         check_df = pd.DataFrame({
@@ -469,7 +464,7 @@ class Squishy:
             "dirty_percent": dirty_data_percent,
             "missing_data_percent": missing_data_percent,
             "completeness_percent": complete_percent,
-            "consistency_percent": consis_percent
+            # "consistency_percent": consis_percent
         })
         
         return check_df
