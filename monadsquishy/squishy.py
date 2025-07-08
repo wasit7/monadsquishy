@@ -7,6 +7,7 @@ from tqdm.auto import tqdm
 from typing import Dict, Any, Callable, List
 
 from . import utils
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 tqdm.pandas()
 class Monad:
@@ -15,23 +16,25 @@ class Monad:
         self.status = 'dirty'  # Starting with 'dirty'
         self.message = []
         self.dtype = object
-
+        self.qulity_status = None
+    
     def __or__(self, func):
-        if 'dirty' == self.status != 'missing': # Only process if 'dirty' and not 'missing'
+        if self.status == 'dirty':  # Only process if 'dirty'
             try:
                 x = func(self.value)
-                if x is not None and pd.notna(x) and x is not pd.NaT: # Process for Passed data
-                    self.value = x
-                    self.status = 'passed'
-                    self.message.append(f'Passed: {func.__name__}()')
-                else: # Process for Missing data
-                    self.value = None
-                    self.status = 'missing'
-                    self.message.append(f'Missing: {func.__name__}()')
+                self.value = x
+                self.status = 'passed'
+                self.message.append(f'Passed: {func.__name__}()')
+
+                for status in utils.status.all_status:
+                    print(f"{status}  {func.__name__}")
+                    if status in str(func.__name__):
+                        self.qulity_status = status
                 return self
             except Exception as e:
                 self.message.append(f'Failed: {func.__name__}(): {str(e)}')
         return self
+
 
     def __repr__(self):
         return f'{self.status}({self.value}) {self.message}'
@@ -209,8 +212,9 @@ class Squishy:
         """
         df = df[[column_name]].copy()
         df['input'] = df[column_name]
-        df['monad_result'] = df[column_name].progress_apply(
-            lambda x: Monad(x).apply(monad_funcs),
+        df['monad_result'] = df[column_name].apply(Monad)
+        df['monad_result'] = df['monad_result'].progress_apply(
+            lambda x: x.apply(monad_funcs),
             
         )
         df_transformed=pd.DataFrame({
@@ -218,6 +222,7 @@ class Squishy:
             'value':df['monad_result'].apply(lambda x: x.value),
             'status':df['monad_result'].apply(lambda x: x.status),
             'message':df['monad_result'].apply(lambda x: x.message),
+            'qulity_status':df['monad_result'].apply(lambda x: x.qulity_status),
             
         })
         return df_transformed
@@ -225,63 +230,71 @@ class Squishy:
     def explode(self,df_transformed):
         df_exploded=df_transformed.explode('message').reset_index(names=['row'])
         df_exploded.insert(3, 'is_passed', df_exploded.message.str.match("Passed:"))
+        # df_exploded.insert(4, 'qulity_report', df_exploded.qulity_status)
         # df_exploded['is_passed']=df_exploded.message.str.match("Passed:")
         return df_exploded
     
     def create_dir(self, path):
         os.makedirs(path, exist_ok=True)
+
+    def process_column(self, _df, out_col, in_col, funcs):
+        print(f"Output: {out_col}")
+        print(f'''Input: {in_col[:20]:20}\nProcess: {str([f.__name__ for f in funcs])}''')
+        
+        df_transformed = self.apply_transformations(_df, in_col, funcs)
+        df_exploded = self.explode(df_transformed)
+
+        df_transformed_result = pd.Series(df_transformed['value'], name=out_col)
+        
+        df_exploded.insert(1, 'in_column', in_col)
+        df_exploded.insert(2, 'out_column', out_col)
+        
+        return df_transformed_result, df_exploded
             
     def all_transformations(self, sq_config):
-        # all_transformed=[]
-        # all_exploded=[]
-        for pull in sq_config.get('transformations',[]):
+        for pull in sq_config.get('transformations', []):
             df_all_transformed = pd.DataFrame()
             df_all_exploded = pd.DataFrame()
             _df = pull['input_table']
-            for i,x in enumerate(pull['out_columns'].items()):
-                k,v=x
-                out_col = k
-                in_col = v['input']
-                funcs = v['funcs']
-                print(f"{i + 1}/{len(pull['out_columns'].items())} Output: {out_col}")
-                print(f'''Input: {in_col[:20]:20}\nProcess: {str([ f.__name__ for f in funcs])}''')
-                df_transformed = self.apply_transformations(_df, in_col, funcs)
-                data = df_transformed['value']                
-                if v.get('dtype'): 
-                    data = data.astype(v.get('dtype'))
-                df_all_transformed[out_col]= data # must be string
-                df_exploded = self.explode(df_transformed)
-                df_exploded.insert(1, 'in_column', in_col)
-                df_exploded.insert(2, 'out_column', out_col)
-                df_all_exploded = pd.concat([df_all_exploded, df_exploded])
-            
-            # finalizing the report table by exploding the message    
-            df_all_exploded = df_all_exploded.reset_index(drop=True)\
-                .rename(columns={
-                    "row": "input_row", 
-                    "in_column": "input_column",
-                    "out_column": "output_column", 
-                    "input": "input_value", 
-                    "value":"output_value"
-                }, errors="raise")
-            # print(df_all_exploded)
-           
-            # save transformed table to file
+
+            futures = []
+            with ThreadPoolExecutor() as executor:
+                for out_col, v in pull['out_columns'].items():
+                    in_col = v['input']
+                    funcs = v['funcs']
+                    futures.append(
+                        executor.submit(self.process_column, _df, out_col, in_col, funcs)
+                    )
+
+                for future in as_completed(futures):
+                    try:
+                        df_transformed_col, df_exploded_col = future.result()
+                        df_all_transformed[df_transformed_col.name] = df_transformed_col
+                        df_all_exploded = pd.concat([df_all_exploded, df_exploded_col])
+                    except Exception as e:
+                        print("Error in transformation:", e)
+
+            # Finalize
+            df_all_exploded = df_all_exploded.reset_index(drop=True).rename(columns={
+                "row": "input_row", 
+                "in_column": "input_column",
+                "out_column": "output_column", 
+                "input": "input_value", 
+                "value": "output_value"
+            })
+
+            # Save transformed
             path = pull['transformed_path']
             self.create_dir(path)
-            df_all_transformed.to_parquet(os.path.join(path,'transformed.parquet'), engine='pyarrow')
+            df_all_transformed.to_parquet(os.path.join(path, 'transformed.parquet'))
 
-            # save transformed table to file
+            # Save exploded
             path = pull['exploded_path']
             self.create_dir(path)
             df_all_exploded['input_value'] = df_all_exploded['input_value'].astype(str)
             df_all_exploded['output_value'] = df_all_exploded['output_value'].astype(str)
-            df_all_exploded.to_parquet(os.path.join(path,'exploded.parquet'))
+            df_all_exploded.to_parquet(os.path.join(path, 'exploded.parquet'))
 
-            # append the global list
-            # all_transformed.append(df_all_transformed)
-            # all_exploded.append(df_all_exploded)
-        # return all_transformed, all_exploded
         print('>> Finished transformations!')
 
         for pull in sq_config.get('generation',[]):
@@ -407,13 +420,13 @@ class Squishy:
         clean_data = op_len - (dirty_data + missing_data)
 
         # Calculate percentages
-        dirty_data_percent = (dirty_data / op_len * 100).round(2)
         missing_data_percent = (missing_data / op_len * 100).round(2)
+        dirty_data_percent = (dirty_data / op_len * 100).round(2)
         clean_data_percent = (clean_data / op_len * 100).round(2)
         
         # Calculate completeness and consistency percentages
         complete_percent = (clean_data_percent + dirty_data_percent).round(2)
-        # consis_percent = (clean_data_percent + missing_data_percent).round(2)
+        consis_percent = (clean_data_percent + missing_data_percent).round(2)
 
         # Create the resulting DataFrame
         check_df = pd.DataFrame({
@@ -426,7 +439,7 @@ class Squishy:
             "dirty_percent": dirty_data_percent,
             "missing_data_percent": missing_data_percent,
             "completeness_percent": complete_percent,
-            # "consistency_percent": consis_percent
+            "consistency_percent": consis_percent
         })
         
         return check_df
