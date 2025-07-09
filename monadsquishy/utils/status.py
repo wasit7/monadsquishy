@@ -1,11 +1,18 @@
 MISSING = "missing"
-PASS = "pass"
+NOT_MISSING = "not_missing"
 INVALID = "invalid"
+VALID = "valid"
 INCONSIST = "inconsist"
+PASS = "passed"
 
-all_status = [
-    MISSING,
+pass_status = [
     PASS,
-    INVALID,
+    MISSING,
+    INVALID
+]
+
+fail_status = [
+    NOT_MISSING,
+    VALID,
     INCONSIST
 ]

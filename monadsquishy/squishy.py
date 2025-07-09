@@ -1,6 +1,7 @@
 import os
 import json
 import datetime
+import json
 import pandas as pd
 import pyarrow as pa
 from tqdm.auto import tqdm
@@ -16,7 +17,7 @@ class Monad:
         self.status = 'dirty'  # Starting with 'dirty'
         self.message = []
         self.dtype = object
-        self.qulity_status = None
+        self.quality_status = []
     
     def __or__(self, func):
         if self.status == 'dirty':  # Only process if 'dirty'
@@ -25,14 +26,20 @@ class Monad:
                 self.value = x
                 self.status = 'passed'
                 self.message.append(f'Passed: {func.__name__}()')
-
-                for status in utils.status.all_status:
-                    print(f"{status}  {func.__name__}")
+                self.quality_status.append(utils.status.PASS)
+                for status in utils.status.pass_status:
                     if status in str(func.__name__):
-                        self.qulity_status = status
+                        self.quality_status.pop()
+                        self.quality_status.append(status)
+                        break
+                
                 return self
             except Exception as e:
                 self.message.append(f'Failed: {func.__name__}(): {str(e)}')
+                for status in utils.status.fail_status:
+                    if status in str(e):
+                        self.quality_status.append(status)
+                        break
         return self
 
 
@@ -72,31 +79,41 @@ class DataQualityFramework:
             "uniqueness": unique_rate_percent
         }
 
-    def calculate_staging_zone_metrics(self, df: pd.DataFrame, validate_score: pd.Series, consistency_rules: Dict[str, Callable], expected_schema: Dict[str, str]) -> Dict[str, Any]:
+    def calculate_staging_zone_metrics(self, df: pd.DataFrame, df_log: pd.DataFrame, df_report: pd.DataFrame, expected_schema: Dict[str, str]) -> Dict[str, Any]:
         """Calculates all specified metrics for the Staging Zone."""
         total_rows = len(df)
         total_cols = len(df.columns)
         total_fields = total_rows * total_cols
-
+        df_quality = df_log.drop_duplicates(
+            ['input_row','output_column','output_value'], keep='last'
+        ).groupby('quality_status').agg({'quality_status':'count'}).T
+       
         # 1. Completeness 
-        non_null_fields = df.notna().sum().sum()
+        def check_completeness(df: pd.DataFrame) -> pd.Series:
+            expected_cols = ['passed', 'inconsist', 'invalid']
+            existing_cols = [col for col in expected_cols if col in df.columns]
+            non_null_fields = df[existing_cols].sum().sum()
+            return non_null_fields
+        non_null_fields = check_completeness(df=df_quality)
         completeness_percent = self._calculate_rate(non_null_fields, total_fields)
 
-        # 2. Consistency 
-        def check_row_consistency(df: pd.DataFrame) -> pd.DataFrame:
-            result = pd.DataFrame(index=df.index)
-            for col, rule_func in consistency_rules.items():
-                if col in df.columns:
-                    # Apply the rule to the entire column
-                    result[col] = df[col].map(rule_func)
-            
-            return result
-        passed_consistency = check_row_consistency(df=df).sum().sum()
-        consistency_percent = self._calculate_rate(passed_consistency, len(consistency_rules)*total_rows)
+        # 2. Validation  
+        def check_validation(df: pd.DataFrame) -> pd.DataFrame:
+            expected_cols = ['passed', 'inconsist']
+            existing_cols = [col for col in expected_cols if col in df.columns]
+            validate_score = df[existing_cols].sum().sum()
+            return validate_score
+        passed_validate = check_validation(df=df_quality)
+        validation_precent = self._calculate_rate(passed_validate, total_fields)
 
-        # 3. Validation Failures 
-        passed_validate = validate_score.sum().sum()
-        validation_failures = self._calculate_rate(passed_validate, total_fields)
+        # 3. Consistency 
+        def check_consistency(df: pd.DataFrame) -> pd.DataFrame:
+            if 'passed' in df.columns:
+                return df['passed'].sum()
+            else:
+                return 0
+        passed_consistency = check_consistency(df=df_quality)
+        consistency_percent = self._calculate_rate(passed_consistency, total_fields)
 
         # 4. Schema Compliance 
         def check_column_schema(df: pd.DataFrame) -> pd.Series :
@@ -131,9 +148,10 @@ class DataQualityFramework:
 
         return {
             "completeness": completeness_percent,
-            "validation": validation_failures,
+            "validation": validation_precent,
             "consistency": consistency_percent,
-            "schema": schema_compliance_percent
+            "schema": schema_compliance_percent,
+            "report": json.dumps(df_report.to_dict(orient='records')),
         }
 
     def calculate_integration_zone_metrics(self, df_joined: pd.DataFrame, right_table_key_col: str) -> Dict[str, Any]:
@@ -220,18 +238,25 @@ class Squishy:
         df_transformed=pd.DataFrame({
             'input':df['input'],
             'value':df['monad_result'].apply(lambda x: x.value),
-            'status':df['monad_result'].apply(lambda x: x.status),
+            # 'status':df['monad_result'].apply(lambda x: x.status),
             'message':df['monad_result'].apply(lambda x: x.message),
-            'qulity_status':df['monad_result'].apply(lambda x: x.qulity_status),
+            'quality_status':df['monad_result'].apply(lambda x: x.quality_status),
             
         })
         return df_transformed
     
-    def explode(self,df_transformed):
-        df_exploded=df_transformed.explode('message').reset_index(names=['row'])
-        df_exploded.insert(3, 'is_passed', df_exploded.message.str.match("Passed:"))
-        # df_exploded.insert(4, 'qulity_report', df_exploded.qulity_status)
-        # df_exploded['is_passed']=df_exploded.message.str.match("Passed:")
+    def explode(self, df_transformed):
+        # df_exploded=df_transformed.explode('message').reset_index(names=['row'])
+        # df_exploded=df_transformed.explode('quality_status').reset_index(names=['row'])
+        df_exploded = df_transformed.copy()
+        df_exploded['zipped'] = df_exploded.apply(
+            lambda row: list(zip(row['message'], row['quality_status'])),
+            axis=1
+        )
+        df_exploded = df_exploded.explode('zipped').reset_index(names=['row'])
+        df_exploded[['message', 'quality_status']] = pd.DataFrame(df_exploded['zipped'].tolist(), index=df_exploded.index)
+        df_exploded.drop(columns='zipped', inplace=True)
+        df_exploded.insert(3, 'is_passed', df_exploded.quality_status.str.match("passed"))
         return df_exploded
     
     def create_dir(self, path):
@@ -331,15 +356,15 @@ class Squishy:
     def dirty_report(self, index=0):
         df_log = self.log(index)
         ## dirty report
-        df_last = df_log.drop_duplicates(['input_row','output_column','input_value'], keep='last')
+        df_last = df_log.drop_duplicates(['input_row','output_column','output_value'], keep='last')
         # Filter the dataframe for rows where 'is_passed' is False
-        df_not_passed = df_last[(df_last['is_passed'] == False) & (df_last['status'] == 'dirty')]  # noqa: E712
+        df_not_passed = df_last[(df_last['is_passed'] == False) & (df_last['quality_status'] != 'missing')]  # noqa: E712
 
         # Create the pivot table to count occurrences of failed rows
         df_pivot_report = pd.pivot_table(
             df_not_passed,
             values='is_passed',  # The value to aggregate
-            index=['input_column', 'output_column', 'input_value'],  # Grouping columns
+            index=['input_column', 'output_column', 'output_value', 'quality_status'],  # Grouping columns
             aggfunc='count',  # Aggregate function to count occurrences
             dropna=False,  # Do not drop missing values
             # fill_value=None  # Use NaN when there are no values
@@ -349,7 +374,7 @@ class Squishy:
         df_pivot_report = df_pivot_report.reset_index()
 
         # Renaming the columns for clarity
-        df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_count']
+        df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'quality_status', 'dirty_count']
         # df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
         df = df_pivot_report[df_pivot_report['dirty_count'].notna()].copy()
         order = self.get_output_column(index)
@@ -360,30 +385,101 @@ class Squishy:
     def clean_report(self, index=0):
         df_log = self.log(index)
         ## clean_report
-        df_not_passed = df_log[df_log['is_passed'] == True]
+        df_passed = df_log[df_log['is_passed'] == True]  # noqa: E712
         # Create the pivot table to count occurrences of failed rows
         df_pivot_report = pd.pivot_table(
-            df_not_passed,
+            df_passed,
             values='is_passed',  # The value to aggregate
-            index=['input_column', 'output_column', 'message'],  # Grouping columns
+            index=['input_column', 'output_column', 'output_value'],  # Grouping columns
             aggfunc='count',  # Aggregate function to count occurrences
-            # dropna=False,  # Do not drop missing values
-            fill_value=None  # Use NaN when there are no values
+            dropna=False,  # Do not drop missing values
+            # fill_value=None  # Use NaN when there are no values
         )
 
         # Resetting the index to flatten the pivot table
         df_pivot_report = df_pivot_report.reset_index()
 
         # Renaming the columns for clarity
-        df_pivot_report.columns = ['input_column', 'output_column', 'message', 'clean_count']
-        # df_pivot_report = df_pivot_report.sort_values(['out_column','clean_count'], ascending=False)
+        df_pivot_report.columns = ['input_column', 'output_column', 'output_value', 'clean_count']
         df = df_pivot_report.copy()
         order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column', 'message'], ascending=False)
+        df_sorted = df.sort_values(by=['output_column', 'output_value'], ascending=False)
         return df_sorted
     
-    def report(self, table_name):
+    # def report(self, table_name):
+    #     """_summary_
+
+    #     Args:
+    #         table_name (str): table name
+
+    #     Returns:
+    #         pd.DataFrame: report dataframe
+    #     """
+    #     df = self.output()
+    #     op_len = len(df)
+        
+    #     # Get dirty report to calculate dirty values
+    #     df_dirty_report = self.dirty_report()
+    #     df_dirty_pivot = pd.pivot_table(
+    #         df_dirty_report,
+    #         values='dirty_count',
+    #         index=['input_column'],
+    #         aggfunc='sum',
+    #     ).rename(columns={'dirty_count': 'count'})
+    #     dirty_df = df_dirty_pivot.reindex(index=df.columns)
+    #     if df_dirty_pivot.empty:
+    #         dirty_df['count'] = 0
+    #     dirty_df = pd.Series(dirty_df['count']).fillna(0).astype(int)
+    #     dirty_df.index.name = None
+    #     dirty_data = dirty_df
+        
+    #     # Calculate dirty values, missing values, and clean values for each column
+    #     df_clean_report = self.clean_report()
+    #     df_clean_pivot = pd.pivot_table(
+    #         df_clean_report,
+    #         values='clean_count',
+    #         index=['input_column'],
+    #         aggfunc='sum',
+    #     ).rename(columns={'clean_count': 'count'})
+    #     clean_df = df_clean_pivot.reindex(index=df.columns)
+    #     if df_clean_pivot.empty:
+    #         df_clean_report['clean_count'] = 0
+    #     clean_df = pd.Series(clean_df['count']).fillna(0).astype(int)
+    #     clean_df.index.name = None
+    #     clean_data = clean_df
+
+    #     missing_df = df.isna().sum()
+    #     missing_df = pd.Series(missing_df.to_frame(name='count')['count']).fillna(0).astype(int)
+    #     missing_df.index.name = None
+    #     missing_data = missing_df
+
+    #     # Calculate percentages
+    #     missing_data_percent = (missing_data / op_len * 100).round(2)
+    #     dirty_data_percent = (dirty_data / op_len * 100).round(2)
+    #     clean_data_percent = (clean_data / op_len * 100).round(2)
+        
+    #     # Calculate completeness and consistency percentages
+    #     complete_percent = (clean_data_percent + dirty_data_percent).round(2)
+    #     consist_percent = (clean_data_percent).round(2)
+
+    #     # Create the resulting DataFrame
+    #     check_df = pd.DataFrame({
+    #         "Table": table_name,
+    #         "Field": df.columns,
+    #         "clean": clean_data,
+    #         "dirty": dirty_data,
+    #         "missing_data": missing_data,
+    #         "clean_percent": clean_data_percent,
+    #         "dirty_percent": dirty_data_percent,
+    #         "missing_data_percent": missing_data_percent,
+    #         "completeness_percent": complete_percent,
+    #         "consistency_percent": consist_percent
+    #     }).sort_index()
+        
+    #     return check_df
+
+    def report(self, table_name: str) -> pd.DataFrame:
         """_summary_
 
         Args:
@@ -394,30 +490,33 @@ class Squishy:
         """
         df = self.output()
         op_len = len(df)
+
+        df_log = self.log()
+
+        _df_log = df_log.drop_duplicates(['input_row','output_column','output_value'], keep='last').groupby(['input_column', 'quality_status']).size().unstack(fill_value=0)
         
-        # Get dirty report to calculate dirty values
-        df_dirty_report = self.dirty_report()
-        df_dirty_pivot = pd.pivot_table(
-            df_dirty_report,
-            values='dirty_count',
-            index=['input_column'],
-            aggfunc='sum',
-        ).rename(columns={'dirty_count': 'count'})
-    
-        # Calculate dirty values, missing values, and clean values for each column
-        dirty_df = df_dirty_pivot.reindex(index=df.columns)
-        if df_dirty_pivot.empty:
-            dirty_df['count'] = 0
-        dirty_df = pd.Series(dirty_df['count']).fillna(0).astype(int)
-        dirty_df.index.name = None
-        dirty_data = dirty_df
-
-        missing_df = df.isna().sum()
-        missing_df = pd.Series(missing_df.to_frame(name='count')['count']).fillna(0).astype(int)
-        missing_df.index.name = None
-        missing_data = missing_df
-
-        clean_data = op_len - (dirty_data + missing_data)
+        # Calculate clean, inconsistent, invalid, and missing data counts
+        clean_data = (
+            pd.Series(_df_log['passed'], name='count').fillna(0).astype(int)
+            if 'passed' in _df_log.columns
+            else pd.Series(0, index=_df_log.index, name='count', dtype=int)
+        )
+        inconsist_data = (
+            pd.Series(_df_log['inconsist'], name='count').fillna(0).astype(int)
+            if 'inconsist' in _df_log.columns
+            else pd.Series(0, index=_df_log.index, name='count', dtype=int)
+        )
+        invalid_data = (
+            pd.Series(_df_log['invalid'], name='count').fillna(0).astype(int)
+            if 'invalid' in _df_log.columns
+            else pd.Series(0, index=_df_log.index, name='count', dtype=int)
+        )
+        missing_data = (
+            pd.Series(_df_log['missing'], name='count').fillna(0).astype(int)
+            if 'missing' in _df_log.columns
+            else pd.Series(0, index=_df_log.index, name='count', dtype=int)
+        )
+        dirty_data = inconsist_data + invalid_data
 
         # Calculate percentages
         missing_data_percent = (missing_data / op_len * 100).round(2)
@@ -426,62 +525,29 @@ class Squishy:
         
         # Calculate completeness and consistency percentages
         complete_percent = (clean_data_percent + dirty_data_percent).round(2)
-        consis_percent = (clean_data_percent + missing_data_percent).round(2)
+        consist_percent = (clean_data_percent).round(2)
 
         # Create the resulting DataFrame
-        check_df = pd.DataFrame({
+        report_df = pd.DataFrame({
             "Table": table_name,
             "Field": df.columns,
+            "num_rows": op_len,
             "clean": clean_data,
-            "dirty": dirty_data,
+            "consistent_data": clean_data,
+            "inconsistent_data": inconsist_data,
+            "valid_data": clean_data + inconsist_data,
+            "invalid_data": invalid_data,
+            "not_missing_data": clean_data + inconsist_data + invalid_data,
             "missing_data": missing_data,
+            "dirty_data": dirty_data,
             "clean_percent": clean_data_percent,
             "dirty_percent": dirty_data_percent,
-            "missing_data_percent": missing_data_percent,
+            "missing_percent": missing_data_percent,
             "completeness_percent": complete_percent,
-            "consistency_percent": consis_percent
-        })
+            "consistency_percent": consist_percent
+        }).sort_index()
         
-        return check_df
-    
-    # def _generate_metrics_report(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
-    #     state = self.config.get("state")
-    #     now = pd.Timestamp.now()
-
-    #     if state == 'landing':
-    #         # Count duplicates across all columns
-    #         duplicate_count = df.duplicated().sum()
-    #         return pd.DataFrame([{
-    #             'name': table_name,
-    #             'timestamp': now,
-    #             'duplicate_count': duplicate_count
-    #         }])
-
-    #     elif state == 'staging':
-    #         total_rows = len(df)
-    #         report = {
-    #             'name': table_name,
-    #             'timestamp': now,
-    #             'completeness': 100 * (1 - df.isnull().sum().mean() / total_rows),
-    #             'validation': 100 * (df.ne("Failed").sum().mean() / total_rows),
-    #             'consistency': 100 * (df.apply(lambda col: col.map(type).nunique() <= 1).mean()),
-    #             'schema': 100.0  # You can plug in schema matching logic if needed
-    #         }
-    #         return pd.DataFrame([report])
-
-    #     elif state == 'integration':
-    #         # Example logic: assume you already know which cols should be deduped/joined
-    #         duplicate_rate = 100 * (1 - df.duplicated().sum() / len(df))
-    #         join_accuracy = 95.0  # Mocked value, adjust per real logic
-    #         return pd.DataFrame([{
-    #             'name': table_name,
-    #             'timestamp': now,
-    #             'duplicate_rate': duplicate_rate,
-    #             'join_accuracy': join_accuracy
-    #         }])
-
-    #     else:
-    #         raise Exception(f"Unsupported state for report: {state}")
+        return report_df
 
     def _generate_metrics_report(self, df: pd.DataFrame, table_name: str, date_str=None) -> pd.DataFrame:
         """
@@ -503,15 +569,14 @@ class Squishy:
 
         elif state == 'staging':
             # These rules must be defined in the run configuration
-            consistency_rules = metrics_config.get('consistency_rules', {})
             expected_schema = metrics_config.get('expected_schema', {})
             
             # Get validate score from report
-            output_report = self.report(table_name)    
-            validate_score = output_report.loc[df.columns]['clean']
-            if not consistency_rules or not expected_schema:
-                raise ValueError("Staging report requires 'consistency_rules' and 'expected_schema' in metrics_config")
-            metrics = self.dq_framework.calculate_staging_zone_metrics(df, validate_score, consistency_rules, expected_schema)
+            df_log = self.log()
+            df_report = self.report(table_name=table_name)
+            if not expected_schema:
+                raise ValueError("Staging report requires 'expected_schema' in metrics_config")
+            metrics = self.dq_framework.calculate_staging_zone_metrics(df, df_log, df_report, expected_schema)
 
         elif state == 'integration':
             # The Integration Zone focuses on the success of deduplication and join operations.
