@@ -318,6 +318,7 @@ class Squishy:
             self.create_dir(path)
             df_all_exploded['input_value'] = df_all_exploded['input_value'].astype(str)
             df_all_exploded['output_value'] = df_all_exploded['output_value'].astype(str)
+            df_all_exploded = df_all_exploded.sort_values(by=['input_column', 'output_column']).reset_index(drop=True)
             df_all_exploded.to_parquet(os.path.join(path, 'exploded.parquet'))
 
         print('>> Finished transformations!')
@@ -490,7 +491,8 @@ class Squishy:
         """
         df = self.output()
         op_len = len(df)
-
+        fields = df.columns.tolist()
+        
         df_log = self.log()
 
         _df_log = df_log.drop_duplicates(['input_row','output_column','output_value'], keep='last').groupby(['input_column', 'quality_status']).size().unstack(fill_value=0)
@@ -500,22 +502,26 @@ class Squishy:
             pd.Series(_df_log['passed'], name='count').fillna(0).astype(int)
             if 'passed' in _df_log.columns
             else pd.Series(0, index=_df_log.index, name='count', dtype=int)
-        )
+        ).reindex(index=fields)
+
         inconsist_data = (
             pd.Series(_df_log['inconsist'], name='count').fillna(0).astype(int)
             if 'inconsist' in _df_log.columns
             else pd.Series(0, index=_df_log.index, name='count', dtype=int)
-        )
+        ).reindex(index=fields)
+
         invalid_data = (
             pd.Series(_df_log['invalid'], name='count').fillna(0).astype(int)
             if 'invalid' in _df_log.columns
             else pd.Series(0, index=_df_log.index, name='count', dtype=int)
-        )
+        ).reindex(index=fields)
+
         missing_data = (
             pd.Series(_df_log['missing'], name='count').fillna(0).astype(int)
             if 'missing' in _df_log.columns
             else pd.Series(0, index=_df_log.index, name='count', dtype=int)
-        )
+        ).reindex(index=fields)
+
         dirty_data = inconsist_data + invalid_data
 
         # Calculate percentages
@@ -530,7 +536,7 @@ class Squishy:
         # Create the resulting DataFrame
         report_df = pd.DataFrame({
             "Table": table_name,
-            "Field": df.columns,
+            "Field": fields,
             "num_rows": op_len,
             "clean": clean_data,
             "consistent_data": clean_data,
@@ -545,7 +551,7 @@ class Squishy:
             "missing_percent": missing_data_percent,
             "completeness_percent": complete_percent,
             "consistency_percent": consist_percent
-        }).sort_index()
+        }).reset_index(drop=True)
         
         return report_df
 
