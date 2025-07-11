@@ -492,10 +492,10 @@ class Squishy:
         df = self.output()
         op_len = len(df)
         fields = df.columns.tolist()
-        
+
         df_log = self.log()
 
-        _df_log = df_log.drop_duplicates(['input_row','output_column','output_value'], keep='last').groupby(['input_column', 'quality_status']).size().unstack(fill_value=0)
+        _df_log = df_log.drop_duplicates(['input_row','output_column','output_value'], keep='last').groupby(['output_column', 'quality_status']).size().unstack(fill_value=0)
         
         # Calculate clean, inconsistent, invalid, and missing data counts
         clean_data = (
