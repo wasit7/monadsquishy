@@ -4,6 +4,7 @@ import datetime
 import json
 import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 from tqdm.auto import tqdm
 from typing import Dict, Any, Callable, List
 
@@ -345,7 +346,9 @@ class Squishy:
             # Create a dummy dataframe if it doesn't exist for demonstration
             print(f"Warning: Output file not found at {path}. Creating a dummy empty DataFrame.")
             return pd.DataFrame()
-        return pd.read_parquet(os.path.join(path,'transformed.parquet'), dtype_backend='pyarrow')
+        
+        df_output = pq.read_table(os.path.join(path,'transformed.parquet'))
+        return df_output.to_pandas(types_mapper=pd.ArrowDtype)
 
     def log(self, index=0):
         path = self.config['transformations'][index]['exploded_path']
