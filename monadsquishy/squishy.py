@@ -36,7 +36,11 @@ class Monad:
                 
                 return self
             except Exception as e:
-                self.message.append(f'Failed: {func.__name__}(): {str(e)}')
+                if len(e.args) <= 1:
+                    self.message.append(f'Failed: {func.__name__}(): {str(e)}')
+                else:
+                    self.message.append(f'Failed: {func.__name__}(): {e.args[0]}')
+                    self.value = e.args[1]
                 for status in utils.status.fail_status:
                     if status in str(e):
                         self.quality_status.append(status)
