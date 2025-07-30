@@ -530,34 +530,42 @@ class Squishy:
         ).reindex(index=fields)
 
         dirty_data = inconsist_data + invalid_data
+        
+        nt = missing_data + invalid_data + inconsist_data + clean_data
+        ng = nt - missing_data - invalid_data - inconsist_data
+
+        complete_percent = ((1 - (missing_data / nt )) * 100).round(2)
+        validation_percent = ((1 - (invalid_data / (nt-missing_data))) * 100).round(2)
+        consistency_percent = ((1 - (inconsist_data / (nt-missing_data-invalid_data))) * 100).round(2)
 
         # Calculate percentages
-        missing_data_percent = (missing_data / op_len * 100).round(2)
-        dirty_data_percent = (dirty_data / op_len * 100).round(2)
-        clean_data_percent = (clean_data / op_len * 100).round(2)
+        # missing_data_percent = (missing_data / op_len * 100).round(2)
+        # dirty_data_percent = (dirty_data / op_len * 100).round(2)
+        # clean_data_percent = (clean_data / op_len * 100).round(2)
         
-        # Calculate completeness and consistency percentages
-        complete_percent = (clean_data_percent + dirty_data_percent).round(2)
-        consist_percent = (clean_data_percent).round(2)
+        # # Calculate completeness and consistency percentages
+        # complete_percent = (clean_data_percent + dirty_data_percent).round(2)
+        # consist_percent = (clean_data_percent).round(2)
 
         # Create the resulting DataFrame
         report_df = pd.DataFrame({
             "Table": table_name,
             "Field": fields,
             "num_rows": op_len,
-            "clean": clean_data,
-            "consistent_data": clean_data,
-            "inconsistent_data": inconsist_data,
-            "valid_data": clean_data + inconsist_data,
-            "invalid_data": invalid_data,
-            "not_missing_data": clean_data + inconsist_data + invalid_data,
             "missing_data": missing_data,
-            "dirty_data": dirty_data,
-            "clean_percent": clean_data_percent,
-            "dirty_percent": dirty_data_percent,
-            "missing_percent": missing_data_percent,
+            "invalid_data": invalid_data,
+            "inconsistent_data": inconsist_data,
+            "clean": clean_data,
             "completeness_percent": complete_percent,
-            "consistency_percent": consist_percent
+            "validation_percent": validation_percent,
+            "consistency_percent": consistency_percent,
+            # "consistent_data": clean_data,
+            # "valid_data": clean_data + inconsist_data,
+            # "not_missing_data": clean_data + inconsist_data + invalid_data,
+            # "dirty_data": dirty_data,
+            # "clean_percent": clean_data_percent,
+            # "dirty_percent": dirty_data_percent,
+            # "missing_percent": missing_data_percent,
         }).reset_index(drop=True)
         
         return report_df
