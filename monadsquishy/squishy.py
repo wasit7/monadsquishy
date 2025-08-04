@@ -3,8 +3,6 @@ import json
 import datetime
 import json
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 from tqdm.auto import tqdm
 from typing import Dict, Any, Callable, List
 
@@ -89,9 +87,7 @@ class DataQualityFramework:
         total_rows = len(df)
         total_cols = len(df.columns)
         total_fields = total_rows * total_cols
-        df_quality = df_log.drop_duplicates(
-            ['input_row','output_column','output_value'], keep='last'
-        ).groupby('quality_status').agg({'quality_status':'count'}).T
+        df_quality = df_log.groupby('quality_status').agg({'quality_status':'count'}).T
        
         # 1. Completeness 
         def check_completeness(df: pd.DataFrame) -> pd.Series:
@@ -200,11 +196,10 @@ class DataQualityFramework:
 
 allow_state = {'test', 'landing','staging','integration', 'mart'}
 
-
 class Squishy:
     def __init__(self, config):
         self.config = config
-        if (config.get('state', None) in allow_state) == False:
+        if (config.get('state', None) in allow_state) == False:  # noqa: E712
             raise Exception(f"state must be {allow_state}")
         if config.get('bucket_config'):
             bucket_config = config.get('bucket_config')
@@ -501,7 +496,7 @@ class Squishy:
 
         df_log = self.log()
 
-        _df_log = df_log.drop_duplicates(['input_row','output_column','output_value'], keep='last').groupby(['output_column', 'quality_status']).size().unstack(fill_value=0)
+        _df_log = df_log.groupby(['output_column', 'quality_status']).size().unstack(fill_value=0)
         
         # Calculate clean, inconsistent, invalid, and missing data counts
         clean_data = (
@@ -528,10 +523,9 @@ class Squishy:
             else pd.Series(0, index=_df_log.index, name='count', dtype=int)
         ).reindex(index=fields)
 
-        dirty_data = inconsist_data + invalid_data
         
         nt = missing_data + invalid_data + inconsist_data + clean_data
-        ng = nt - missing_data - invalid_data - inconsist_data
+        ng = nt - missing_data - invalid_data - inconsist_data  # noqa: F841
 
         complete_percent = ((1 - (missing_data / nt )) * 100).round(2)
         validation_percent = ((1 - (invalid_data / (nt-missing_data))) * 100).round(2)
