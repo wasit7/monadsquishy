@@ -91,7 +91,7 @@ class DataQualityFramework:
        
         # 1. Completeness 
         def check_completeness(df: pd.DataFrame) -> pd.Series:
-            expected_cols = ['passed', 'inconsist', 'invalid']
+            expected_cols = ['passed', 'inconsistent', 'invalid']
             existing_cols = [col for col in expected_cols if col in df.columns]
             non_null_fields = df[existing_cols].sum().sum()
             return non_null_fields
@@ -100,7 +100,7 @@ class DataQualityFramework:
 
         # 2. Validation  
         def check_validation(df: pd.DataFrame) -> pd.DataFrame:
-            expected_cols = ['passed', 'inconsist']
+            expected_cols = ['passed', 'inconsistent']
             existing_cols = [col for col in expected_cols if col in df.columns]
             validate_score = df[existing_cols].sum().sum()
             return validate_score
@@ -357,31 +357,31 @@ class Squishy:
     
     def dirty_report(self, index=0):
         df_log = self.log(index)
-        ## dirty report
-        df_last = df_log.drop_duplicates(['input_row','output_column','output_value'], keep='last')
         # Filter the dataframe for rows where 'is_passed' is False
-        df_not_passed = df_last[(df_last['is_passed'] == False) & (df_last['quality_status'] != 'missing')]  # noqa: E712
+        df_not_passed = df_log[(df_log['is_passed'] == False) & (df_log['quality_status'] != 'not_missing') & (df_log['quality_status'] != 'valid')]
 
         # Create the pivot table to count occurrences of failed rows
         df_pivot_report = pd.pivot_table(
             df_not_passed,
             values='is_passed',  # The value to aggregate
-            index=['input_column', 'output_column', 'output_value', 'quality_status'],  # Grouping columns
+            index=['input_column', 'output_column', 'input_value', 'quality_status'],  # Grouping columns
             aggfunc='count',  # Aggregate function to count occurrences
-            dropna=False,  # Do not drop missing values
+            # dropna=False,  # Do not drop missing values
             # fill_value=None  # Use NaN when there are no values
         )
 
         # Resetting the index to flatten the pivot table
         df_pivot_report = df_pivot_report.reset_index()
+        df_pivot_report = df_pivot_report.rename(columns={'is_passed': 'dirty_count', 'quality_status': 'dirty_status'})
 
         # Renaming the columns for clarity
-        df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'quality_status', 'dirty_count']
+        df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_status', 'dirty_count']
         # df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
         df = df_pivot_report[df_pivot_report['dirty_count'].notna()].copy()
+        df = df[['input_column', 'output_column', 'input_value', 'dirty_count', 'dirty_status']]
         order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column','dirty_count'], ascending=False).reset_index(drop=True)
+        df_sorted = df.sort_values(by=['dirty_count'], ascending=False).reset_index(drop=True)
         return df_sorted
 
     def clean_report(self, index=0):
@@ -408,78 +408,6 @@ class Squishy:
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
         df_sorted = df.sort_values(by=['output_column', 'output_value'], ascending=False)
         return df_sorted
-    
-    # def report(self, table_name):
-    #     """_summary_
-
-    #     Args:
-    #         table_name (str): table name
-
-    #     Returns:
-    #         pd.DataFrame: report dataframe
-    #     """
-    #     df = self.output()
-    #     op_len = len(df)
-        
-    #     # Get dirty report to calculate dirty values
-    #     df_dirty_report = self.dirty_report()
-    #     df_dirty_pivot = pd.pivot_table(
-    #         df_dirty_report,
-    #         values='dirty_count',
-    #         index=['input_column'],
-    #         aggfunc='sum',
-    #     ).rename(columns={'dirty_count': 'count'})
-    #     dirty_df = df_dirty_pivot.reindex(index=df.columns)
-    #     if df_dirty_pivot.empty:
-    #         dirty_df['count'] = 0
-    #     dirty_df = pd.Series(dirty_df['count']).fillna(0).astype(int)
-    #     dirty_df.index.name = None
-    #     dirty_data = dirty_df
-        
-    #     # Calculate dirty values, missing values, and clean values for each column
-    #     df_clean_report = self.clean_report()
-    #     df_clean_pivot = pd.pivot_table(
-    #         df_clean_report,
-    #         values='clean_count',
-    #         index=['input_column'],
-    #         aggfunc='sum',
-    #     ).rename(columns={'clean_count': 'count'})
-    #     clean_df = df_clean_pivot.reindex(index=df.columns)
-    #     if df_clean_pivot.empty:
-    #         df_clean_report['clean_count'] = 0
-    #     clean_df = pd.Series(clean_df['count']).fillna(0).astype(int)
-    #     clean_df.index.name = None
-    #     clean_data = clean_df
-
-    #     missing_df = df.isna().sum()
-    #     missing_df = pd.Series(missing_df.to_frame(name='count')['count']).fillna(0).astype(int)
-    #     missing_df.index.name = None
-    #     missing_data = missing_df
-
-    #     # Calculate percentages
-    #     missing_data_percent = (missing_data / op_len * 100).round(2)
-    #     dirty_data_percent = (dirty_data / op_len * 100).round(2)
-    #     clean_data_percent = (clean_data / op_len * 100).round(2)
-        
-    #     # Calculate completeness and consistency percentages
-    #     complete_percent = (clean_data_percent + dirty_data_percent).round(2)
-    #     consist_percent = (clean_data_percent).round(2)
-
-    #     # Create the resulting DataFrame
-    #     check_df = pd.DataFrame({
-    #         "Table": table_name,
-    #         "Field": df.columns,
-    #         "clean": clean_data,
-    #         "dirty": dirty_data,
-    #         "missing_data": missing_data,
-    #         "clean_percent": clean_data_percent,
-    #         "dirty_percent": dirty_data_percent,
-    #         "missing_data_percent": missing_data_percent,
-    #         "completeness_percent": complete_percent,
-    #         "consistency_percent": consist_percent
-    #     }).sort_index()
-        
-    #     return check_df
 
     def report(self, table_name: str) -> pd.DataFrame:
         """_summary_
@@ -506,8 +434,8 @@ class Squishy:
         ).reindex(index=fields)
 
         inconsist_data = (
-            pd.Series(_df_log['inconsist'], name='count').fillna(0).astype(int)
-            if 'inconsist' in _df_log.columns
+            pd.Series(_df_log['inconsistent'], name='count').fillna(0).astype(int)
+            if 'inconsistent' in _df_log.columns
             else pd.Series(0, index=_df_log.index, name='count', dtype=int)
         ).reindex(index=fields)
 
@@ -542,16 +470,16 @@ class Squishy:
 
         # Create the resulting DataFrame
         report_df = pd.DataFrame({
-            "Table": table_name,
-            "Field": fields,
-            "num_rows": op_len,
-            "missing_data": missing_data,
-            "invalid_data": invalid_data,
-            "inconsistent_data": inconsist_data,
-            "clean": clean_data,
-            "completeness_percent": complete_percent,
-            "validation_percent": validation_percent,
-            "consistency_percent": consistency_percent,
+            # "Table": table_name,
+            "Field Name": fields,
+            "Total Rows": op_len,
+            "Missing": missing_data,
+            "Invalid": invalid_data,
+            "Inconsistent": inconsist_data,
+            "Clean": clean_data,
+            "Completeness": complete_percent,
+            "Validity": validation_percent,
+            "Consistency": consistency_percent,
             # "consistent_data": clean_data,
             # "valid_data": clean_data + inconsist_data,
             # "not_missing_data": clean_data + inconsist_data + invalid_data,
