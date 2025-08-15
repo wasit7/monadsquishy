@@ -1,33 +1,22 @@
 MISSING = "missing"
 NOT_MISSING = "not_missing"
-INVALID = "invalid"
+FIXED = "fix"
+NOT_FIXED = 'not_fixed'
 VALID = "valid"
-INCONSIST = "inconsistent"
+INVALID = "invalid"
+INCONSISTENT = "inconsistent"
 PASS = "passed"
 
 pass_status = [
-    PASS,
     MISSING,
-    INVALID
+    FIXED,
+    INVALID,
+    PASS,
 ]
 
 fail_status = [
     NOT_MISSING,
+    NOT_FIXED,
     VALID,
-    INCONSIST
+    INCONSISTENT
 ]
-
-def valid(fix_value: None):
-    if fix_value is None:
-        raise Exception(VALID)
-    else:
-        raise Exception(VALID, fix_value)
-
-def inconsist(fix_value: None):
-    if fix_value is None:
-        raise Exception(INCONSIST)
-    else:
-        raise Exception(INCONSIST, fix_value)
-
-def not_missing():
-    raise Exception(NOT_MISSING)

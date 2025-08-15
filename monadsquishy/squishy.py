@@ -5,6 +5,7 @@ import json
 import pandas as pd
 from tqdm.auto import tqdm
 from typing import Dict, Any, Callable, List
+from IPython.display import display
 
 from . import utils
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,38 +14,38 @@ tqdm.pandas()
 class Monad:
     def __init__(self, value):
         self.value = value
-        self.status = 'dirty'  # Starting with 'dirty'
+        self.status = 'dirty' # dirty, fixed, passed
+        self.output = []
         self.message = []
         self.dtype = object
         self.quality_status = []
     
     def __or__(self, func):
-        if self.status == 'dirty':  # Only process if 'dirty'
-            try:
-                x = func(self.value)
-                self.value = x
+        if self.status == 'passed':
+            return self
+        try:
+            result = func(self.value)
+            if self.status == 'fixed':
+                pass
+            else:
+                self.value = result
+                self.output.append(self.value)
                 self.status = 'passed'
-                self.message.append(f'Passed: {func.__name__}()')
-                self.quality_status.append(utils.status.PASS)
-                for status in utils.status.pass_status:
-                    if status in str(func.__name__):
-                        self.quality_status.pop()
-                        self.quality_status.append(status)
-                        break
-                
-                return self
-            except Exception as e:
-                if len(e.args) <= 1:
-                    self.message.append(f'Failed: {func.__name__}(): {str(e)}')
-                else:
-                    self.message.append(f'Failed: {func.__name__}(): {e.args[0]}')
-                    self.value = e.args[1]
-                for status in utils.status.fail_status:
-                    if status in str(e):
-                        self.quality_status.append(status)
-                        break
-        return self
+                self.message.append(f'{func.__name__}()')
+                matched_status = next((s for s in utils.status.pass_status if s in func.__name__  or (utils.status.VALID in func.__name__) and s == utils.status.INVALID), utils.status.PASS)
+                self.quality_status.append(matched_status)
+                if matched_status == utils.status.FIXED:
+                    self.status = 'fixed'
+        except Exception as e:
+            error_msg = str(e)
+            self.message.append(f'{func.__name__}(): {error_msg}')
+            self.output.append(self.value)
+            self.status = 'dirty'
+            matched_status = next((s for s in utils.status.fail_status if s in error_msg), error_msg)
+            if matched_status:
+                self.quality_status.append(matched_status)
 
+        return self
 
     def __repr__(self):
         return f'{self.status}({self.value}) {self.message}'
@@ -233,30 +234,26 @@ class Squishy:
         df['monad_result'] = df[column_name].apply(Monad)
         df['monad_result'] = df['monad_result'].progress_apply(
             lambda x: x.apply(monad_funcs),
-            
         )
         df_transformed=pd.DataFrame({
             'input':df['input'],
+            'output':df['monad_result'].apply(lambda x: x.output),
             'value':df['monad_result'].apply(lambda x: x.value),
-            # 'status':df['monad_result'].apply(lambda x: x.status),
             'message':df['monad_result'].apply(lambda x: x.message),
             'quality_status':df['monad_result'].apply(lambda x: x.quality_status),
-            
         })
         return df_transformed
     
     def explode(self, df_transformed):
-        # df_exploded=df_transformed.explode('message').reset_index(names=['row'])
-        # df_exploded=df_transformed.explode('quality_status').reset_index(names=['row'])
         df_exploded = df_transformed.copy()
         df_exploded['zipped'] = df_exploded.apply(
-            lambda row: list(zip(row['message'], row['quality_status'])),
+            lambda row: list(zip(row['output'], row['message'], row['quality_status'])),
             axis=1
         )
         df_exploded = df_exploded.explode('zipped').reset_index(names=['row'])
-        df_exploded[['message', 'quality_status']] = pd.DataFrame(df_exploded['zipped'].tolist(), index=df_exploded.index)
+        df_exploded[['output', 'message', 'quality_status']] = pd.DataFrame(df_exploded['zipped'].tolist(), index=df_exploded.index)
         df_exploded.drop(columns='zipped', inplace=True)
-        df_exploded.insert(3, 'is_passed', df_exploded.quality_status.str.match("passed"))
+        df_exploded.insert(4, 'is_passed', df_exploded.quality_status.str.match("passed"))
         return df_exploded
     
     def create_dir(self, path):
@@ -281,12 +278,17 @@ class Squishy:
             df_all_transformed = pd.DataFrame()
             df_all_exploded = pd.DataFrame()
             _df = pull['input_table']
+            
 
             futures = []
             with ThreadPoolExecutor() as executor:
                 for out_col, v in pull['out_columns'].items():
                     in_col = v['input']
                     funcs = v['funcs']
+                    if 'is_consistent' not in funcs[-1].__name__:
+                        def end_func(x):
+                            return x
+                        funcs.append(end_func)
                     futures.append(
                         executor.submit(self.process_column, _df, out_col, in_col, funcs)
                     )
@@ -305,12 +307,14 @@ class Squishy:
                 "in_column": "input_column",
                 "out_column": "output_column", 
                 "input": "input_value", 
-                "value": "output_value"
-            })
+                "output": "output_value",
+                # "value": "value"
+            }).drop(columns=['value'])
 
             # Save transformed
             path = pull['transformed_path']
             self.create_dir(path)
+            df_all_transformed = df_all_transformed[_df.columns]
             df_all_transformed.to_parquet(os.path.join(path, 'transformed.parquet'))
 
             # Save exploded
@@ -459,15 +463,6 @@ class Squishy:
         validation_percent = ((1 - (invalid_data / (nt-missing_data))) * 100).round(2)
         consistency_percent = ((1 - (inconsist_data / (nt-missing_data-invalid_data))) * 100).round(2)
 
-        # Calculate percentages
-        # missing_data_percent = (missing_data / op_len * 100).round(2)
-        # dirty_data_percent = (dirty_data / op_len * 100).round(2)
-        # clean_data_percent = (clean_data / op_len * 100).round(2)
-        
-        # # Calculate completeness and consistency percentages
-        # complete_percent = (clean_data_percent + dirty_data_percent).round(2)
-        # consist_percent = (clean_data_percent).round(2)
-
         # Create the resulting DataFrame
         report_df = pd.DataFrame({
             # "Table": table_name,
@@ -480,13 +475,6 @@ class Squishy:
             "Completeness": complete_percent,
             "Validity": validation_percent,
             "Consistency": consistency_percent,
-            # "consistent_data": clean_data,
-            # "valid_data": clean_data + inconsist_data,
-            # "not_missing_data": clean_data + inconsist_data + invalid_data,
-            # "dirty_data": dirty_data,
-            # "clean_percent": clean_data_percent,
-            # "dirty_percent": dirty_data_percent,
-            # "missing_percent": missing_data_percent,
         }).reset_index(drop=True)
         
         return report_df
