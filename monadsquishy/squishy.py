@@ -5,50 +5,43 @@ import json
 import pandas as pd
 from tqdm.auto import tqdm
 from typing import Dict, Any, Callable, List
-from IPython.display import display
 
 from . import utils
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 tqdm.pandas()
+
+allow_state = {'test', 'landing','staging','integration', 'mart'}
+
 class Monad:
     def __init__(self, value):
         self.value = value
-        self.status = 'dirty' # dirty, fixed, passed
+        self.status = 'dirty'  # Starting with 'dirty'
         self.output = []
         self.message = []
-        self.dtype = object
         self.quality_status = []
-    
-    def __or__(self, func):
-        if self.status == 'passed':
-            return self
-        try:
-            result = func(self.value)
-            if self.status == 'fixed':
-                pass
-            else:
-                self.value = result
-                self.output.append(self.value)
-                self.status = 'passed'
-                self.message.append(f'{func.__name__}()')
-                matched_status = next((s for s in utils.status.pass_status if s in func.__name__  or (utils.status.VALID in func.__name__) and s == utils.status.INVALID), utils.status.PASS)
-                self.quality_status.append(matched_status)
-                if matched_status == utils.status.FIXED:
-                    self.status = 'fixed'
-        except Exception as e:
-            error_msg = str(e)
-            self.message.append(f'{func.__name__}(): {error_msg}')
-            self.output.append(self.value)
-            self.status = 'dirty'
-            matched_status = next((s for s in utils.status.fail_status if s in error_msg), error_msg)
-            if matched_status:
-                self.quality_status.append(matched_status)
+        self.dtype = object
 
+    def __or__(self, func):
+        if self.status == 'dirty':  # Only process if 'dirty'
+            try:
+                x = func(self.value)
+                self.value = x
+                self.status = 'passed'
+                self.output.append(self.value)
+                self.message.append(f'{func.__name__}()')
+                self.quality_status.append(getattr(func, "decorator_name", "passed"))
+                return self
+            except Exception as e:
+                if getattr(e, "value", None) is not None:
+                    self.value = e.value    
+                self.output.append(self.value)          
+                self.message.append(f'{func.__name__}()')
+                self.quality_status.append(str(e))
         return self
 
     def __repr__(self):
-        return f'{self.status}({self.value}) {self.message}'
+        return f'{self.status}: {self.value}, {self.message}, {self.quality_status}'
 
     def __str__(self):
         return self.__repr__()
@@ -195,8 +188,6 @@ class DataQualityFramework:
         
         return {"anomaly_rate_percent": anomaly_rate_percent}
 
-allow_state = {'test', 'landing','staging','integration', 'mart'}
-
 class Squishy:
     def __init__(self, config):
         self.config = config
@@ -279,16 +270,15 @@ class Squishy:
             df_all_exploded = pd.DataFrame()
             _df = pull['input_table']
             
-
             futures = []
             with ThreadPoolExecutor() as executor:
                 for out_col, v in pull['out_columns'].items():
                     in_col = v['input']
                     funcs = v['funcs']
-                    if 'is_consistent' not in funcs[-1].__name__:
-                        def end_func(x):
+                    if funcs[-1].decorator_name != 'passed': # Check last function is not consistency auto add end function
+                        def end(x):
                             return x
-                        funcs.append(end_func)
+                        funcs.append(end)
                     futures.append(
                         executor.submit(self.process_column, _df, out_col, in_col, funcs)
                     )
@@ -362,7 +352,7 @@ class Squishy:
     def dirty_report(self, index=0):
         df_log = self.log(index)
         # Filter the dataframe for rows where 'is_passed' is False
-        df_not_passed = df_log[(df_log['is_passed'] == False) & (df_log['quality_status'] != 'not_missing') & (df_log['quality_status'] != 'valid')]
+        df_not_passed = df_log[(df_log['is_passed'] == False) & (df_log['quality_status'] != 'not_missing') & (df_log['quality_status'] != 'valid')]  # noqa: E712
 
         # Create the pivot table to count occurrences of failed rows
         df_pivot_report = pd.pivot_table(

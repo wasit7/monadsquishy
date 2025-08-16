@@ -1,13 +1,19 @@
 from functools import wraps
 from .. import utils
 
+class CustomException(Exception):
+    def __init__(self, value, message):
+        super().__init__(message)
+        self.value = value
+
 def completeness(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
-        if not result or result == '':
-            return None
-        raise Exception(utils.status.NOT_MISSING)
+        if result:
+            raise Exception(utils.status.NOT_MISSING)
+        return None
+    wrapper.decorator_name = "missing"
     return wrapper
 
 def fix(func):
@@ -15,8 +21,8 @@ def fix(func):
     def wrapper(x, *args, **kwargs):
         result = func(x, *args, **kwargs)
         if result:
-            return result
-        raise Exception(utils.status.NOT_FIXED)
+            raise CustomException(result, utils.status.FIXED)
+        raise CustomException(x, utils.status.NOT_FIXED)
     return wrapper
 
 def validity(func):
@@ -26,13 +32,15 @@ def validity(func):
         if result:
             raise Exception(utils.status.VALID)
         return x
+    wrapper.decorator_name = "invalid"
     return wrapper
 
 def consistency(func):
     @wraps(func)
-    def wrapper(*args, **kwargs):
-        result = func(*args, **kwargs)
+    def wrapper(x, *args, **kwargs):
+        result = func(x, *args, **kwargs)
         if result:
             return result
-        raise Exception(utils.status.INCONSISTENT)
+        raise CustomException(x, utils.status.INCONSISTENT)
+    wrapper.decorator_name = "passed"
     return wrapper
