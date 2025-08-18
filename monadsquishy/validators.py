@@ -1,5 +1,5 @@
 from functools import wraps
-from .. import utils
+from . import utils
 
 class CustomException(Exception):
     def __init__(self, value, message):
@@ -14,15 +14,6 @@ def completeness(func):
             raise Exception(utils.status.NOT_MISSING)
         return None
     wrapper.decorator_name = "missing"
-    return wrapper
-
-def fix(func):
-    @wraps(func)
-    def wrapper(x, *args, **kwargs):
-        result = func(x, *args, **kwargs)
-        if result:
-            raise CustomException(result, utils.status.FIXED)
-        raise CustomException(x, utils.status.NOT_FIXED)
     return wrapper
 
 def validity(func):
@@ -43,4 +34,17 @@ def consistency(func):
             return result
         raise CustomException(x, utils.status.INCONSISTENT)
     wrapper.decorator_name = "passed"
+    return wrapper
+
+def fix(func):
+    @wraps(func)
+    def wrapper(x, *args, **kwargs):
+        try:
+            result = func(x, *args, **kwargs)
+        except Exception:
+            raise CustomException(x, utils.status.NOT_FIXED)
+
+        if result:
+            raise CustomException(result, utils.status.FIXED)
+        raise CustomException(x, utils.status.NOT_FIXED)
     return wrapper

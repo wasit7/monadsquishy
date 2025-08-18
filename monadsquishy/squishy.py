@@ -34,7 +34,7 @@ class Monad:
                 return self
             except Exception as e:
                 if getattr(e, "value", None) is not None:
-                    self.value = e.value    
+                    self.value = e.value
                 self.output.append(self.value)          
                 self.message.append(f'{func.__name__}()')
                 self.quality_status.append(str(e))
@@ -269,13 +269,16 @@ class Squishy:
             df_all_transformed = pd.DataFrame()
             df_all_exploded = pd.DataFrame()
             _df = pull['input_table']
+            _df_out_col = []
             
             futures = []
             with ThreadPoolExecutor() as executor:
                 for out_col, v in pull['out_columns'].items():
                     in_col = v['input']
                     funcs = v['funcs']
-                    if funcs[-1].decorator_name != 'passed': # Check last function is not consistency auto add end function
+                    _df_out_col.append(out_col)
+                    # if funcs[-1].decorator_name != 'passed': # Check last function is not consistency auto add end function
+                    if not funcs or getattr(funcs[-1], "decorator_name", "passed"):
                         def end(x):
                             return x
                         funcs.append(end)
@@ -304,7 +307,7 @@ class Squishy:
             # Save transformed
             path = pull['transformed_path']
             self.create_dir(path)
-            df_all_transformed = df_all_transformed[_df.columns]
+            df_all_transformed = df_all_transformed[_df_out_col] # reorder as out_columns
             df_all_transformed.to_parquet(os.path.join(path, 'transformed.parquet'))
 
             # Save exploded
@@ -351,8 +354,11 @@ class Squishy:
     
     def dirty_report(self, index=0):
         df_log = self.log(index)
-        # Filter the dataframe for rows where 'is_passed' is False
-        df_not_passed = df_log[(df_log['is_passed'] == False) & (df_log['quality_status'] != 'not_missing') & (df_log['quality_status'] != 'valid')]  # noqa: E712
+        # Filter the dataframe for rows where 'is_passed' is False and in missing, invlid and inconsistent
+        df_not_passed = df_log[
+            (df_log['is_passed'] == False) &  # noqa: E712
+            (df_log['quality_status'].isin(['missing', 'invalid', 'incosistent']))
+        ]
 
         # Create the pivot table to count occurrences of failed rows
         df_pivot_report = pd.pivot_table(
@@ -362,14 +368,10 @@ class Squishy:
             aggfunc='count',  # Aggregate function to count occurrences
             # dropna=False,  # Do not drop missing values
             # fill_value=None  # Use NaN when there are no values
-        )
-
-        # Resetting the index to flatten the pivot table
-        df_pivot_report = df_pivot_report.reset_index()
-        df_pivot_report = df_pivot_report.rename(columns={'is_passed': 'dirty_count', 'quality_status': 'dirty_status'})
+        ).reset_index().rename(columns={'is_passed': 'dirty_count', 'quality_status': 'dirty_status'})
 
         # Renaming the columns for clarity
-        df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_status', 'dirty_count']
+        # df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_status', 'dirty_count']
         # df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
         df = df_pivot_report[df_pivot_report['dirty_count'].notna()].copy()
         df = df[['input_column', 'output_column', 'input_value', 'dirty_count', 'dirty_status']]
@@ -380,27 +382,25 @@ class Squishy:
 
     def clean_report(self, index=0):
         df_log = self.log(index)
-        ## clean_report
+        # Filter the dataframe for rows where 'is_passed' is True
         df_passed = df_log[df_log['is_passed'] == True]  # noqa: E712
+        
         # Create the pivot table to count occurrences of failed rows
         df_pivot_report = pd.pivot_table(
             df_passed,
             values='is_passed',  # The value to aggregate
             index=['input_column', 'output_column', 'output_value'],  # Grouping columns
             aggfunc='count',  # Aggregate function to count occurrences
-            dropna=False,  # Do not drop missing values
+            # dropna=False,  # Do not drop missing values
             # fill_value=None  # Use NaN when there are no values
-        )
-
-        # Resetting the index to flatten the pivot table
-        df_pivot_report = df_pivot_report.reset_index()
+        ).reset_index()
 
         # Renaming the columns for clarity
         df_pivot_report.columns = ['input_column', 'output_column', 'output_value', 'clean_count']
         df = df_pivot_report.copy()
         order = self.get_output_column(index)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['output_column', 'output_value'], ascending=False)
+        df_sorted = df.sort_values(by=['output_column', 'output_value'], ascending=True)
         return df_sorted
 
     def report(self, table_name: str) -> pd.DataFrame:
