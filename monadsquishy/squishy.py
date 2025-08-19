@@ -17,6 +17,7 @@ class Monad:
     def __init__(self, value):
         self.value = value
         self.status = 'dirty'  # Starting with 'dirty'
+        self.input = []
         self.output = []
         self.message = []
         self.quality_status = []
@@ -25,6 +26,7 @@ class Monad:
     def __or__(self, func):
         if self.status == 'dirty':  # Only process if 'dirty'
             try:
+                self.input.append(self.value)
                 x = func(self.value)
                 self.value = x
                 self.status = 'passed'
@@ -227,7 +229,8 @@ class Squishy:
             lambda x: x.apply(monad_funcs),
         )
         df_transformed=pd.DataFrame({
-            'input':df['input'],
+            # 'input':df['input'],
+            'input':df['monad_result'].apply(lambda x: x.input),
             'output':df['monad_result'].apply(lambda x: x.output),
             'value':df['monad_result'].apply(lambda x: x.value),
             'message':df['monad_result'].apply(lambda x: x.message),
@@ -238,11 +241,11 @@ class Squishy:
     def explode(self, df_transformed):
         df_exploded = df_transformed.copy()
         df_exploded['zipped'] = df_exploded.apply(
-            lambda row: list(zip(row['output'], row['message'], row['quality_status'])),
+            lambda row: list(zip(row['input'], row['output'], row['message'], row['quality_status'])),
             axis=1
         )
         df_exploded = df_exploded.explode('zipped').reset_index(names=['row'])
-        df_exploded[['output', 'message', 'quality_status']] = pd.DataFrame(df_exploded['zipped'].tolist(), index=df_exploded.index)
+        df_exploded[['input', 'output', 'message', 'quality_status']] = pd.DataFrame(df_exploded['zipped'].tolist(), index=df_exploded.index)
         df_exploded.drop(columns='zipped', inplace=True)
         df_exploded.insert(4, 'is_passed', df_exploded.quality_status.str.match("passed"))
         return df_exploded
@@ -278,7 +281,7 @@ class Squishy:
                     funcs = v['funcs']
                     _df_out_col.append(out_col)
                     # if funcs[-1].decorator_name != 'passed': # Check last function is not consistency auto add end function
-                    if not funcs or getattr(funcs[-1], "decorator_name", "passed"):
+                    if not funcs or getattr(funcs[-1], "decorator_name") != 'passed':
                         def end(x):
                             return x
                         funcs.append(end)
