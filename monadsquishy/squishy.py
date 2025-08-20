@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 tqdm.pandas()
 
-allow_state = {'test', 'landing','staging','integration', 'mart'}
+allow_state = {'test', 'landing', 'staging', 'integration', 'mart'}
 
 class Monad:
     def __init__(self, value):
@@ -24,22 +24,32 @@ class Monad:
         self.dtype = object
 
     def __or__(self, func):
-        if self.status == 'dirty':  # Only process if 'dirty'
-            try:
-                self.input.append(self.value)
-                x = func(self.value)
-                self.value = x
-                self.status = 'passed'
-                self.output.append(self.value)
-                self.message.append(f'{func.__name__}()')
-                self.quality_status.append(getattr(func, "decorator_name", "passed"))
+        if self.status not in ("dirty", "fixed"):
+            return self
+        try:
+            # Short-circuit if last step already fixed
+            if self.status == 'fixed':
+                self.status = 'dirty'
                 return self
-            except Exception as e:
-                if getattr(e, "value", None) is not None:
-                    self.value = e.value
-                self.output.append(self.value)          
-                self.message.append(f'{func.__name__}()')
-                self.quality_status.append(str(e))
+            
+            self.input.append(self.value)
+            x = func(self.value)
+            self.value = x
+            self.status = 'passed'
+            quality = getattr(func, "decorator_name", "passed")
+
+        except Exception as e:
+            # If CustomException (with value attr), capture it
+            if getattr(e, "value", None) is not None:
+                self.value = e.value
+            quality = getattr(e, "message", str(e))
+            if quality == 'fixed':
+                self.status = 'fixed'
+        # Logging (common for both success/error)
+        self.output.append(self.value)
+        self.message.append(f"{func.__name__}()")
+        self.quality_status.append(quality)
+
         return self
 
     def __repr__(self):
@@ -360,7 +370,7 @@ class Squishy:
         # Filter the dataframe for rows where 'is_passed' is False and in missing, invlid and inconsistent
         df_not_passed = df_log[
             (df_log['is_passed'] == False) &  # noqa: E712
-            (df_log['quality_status'].isin(['missing', 'invalid', 'incosistent']))
+            (df_log['quality_status'].isin(['missing', 'invalid', 'inconsistent']))
         ]
 
         # Create the pivot table to count occurrences of failed rows
@@ -406,7 +416,7 @@ class Squishy:
         df_sorted = df.sort_values(by=['output_column', 'output_value'], ascending=True)
         return df_sorted
 
-    def report(self, table_name: str) -> pd.DataFrame:
+    def report(self, table_name: str, date_str=None) -> pd.DataFrame:
         """_summary_
 
         Args:
@@ -418,6 +428,7 @@ class Squishy:
         df = self.output()
         op_len = len(df)
         fields = df.columns.tolist()
+        date_now = pd.Timestamp(date_str, tz='UTC') if date_str else pd.Timestamp.now(tz='UTC')
 
         df_log = self.log()
 
@@ -458,7 +469,7 @@ class Squishy:
 
         # Create the resulting DataFrame
         report_df = pd.DataFrame({
-            # "Table": table_name,
+            "Name": table_name,
             "Field Name": fields,
             "Total Rows": op_len,
             "Missing": missing_data,
@@ -468,6 +479,7 @@ class Squishy:
             "Completeness": complete_percent,
             "Validity": validation_percent,
             "Consistency": consistency_percent,
+            "Timestamp": date_now,
         }).reset_index(drop=True)
         
         return report_df

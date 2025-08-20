@@ -42,9 +42,12 @@ def fix(func):
         try:
             result = func(x, *args, **kwargs)
         except Exception:
-            raise CustomException(x, utils.status.NOT_FIXED)
+            wrapper.decorator_name = "not_fixed"
+            raise CustomException(x, utils.status.NOT_FIXED)  
 
         if result:
+            wrapper.decorator_name = "fixed"
             raise CustomException(result, utils.status.FIXED)
+        wrapper.decorator_name = "not_fixed"
         raise CustomException(x, utils.status.NOT_FIXED)
     return wrapper
