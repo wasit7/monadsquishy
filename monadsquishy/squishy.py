@@ -533,25 +533,43 @@ class Squishy:
         return pd.DataFrame([report_data])
     
     def save(self, table_name, date_str=None):
+        """
+        Save the transformed output and its metrics report as Parquet files.
+
+        Parameters
+        ----------
+        table_name : str
+            Name of the dataset (e.g., "dim_customer").
+        date_str : str, optional
+            Date used in file paths, format 'YYYY-MM-DD'.
+            Defaults to datetim now.
+
+        Example
+        -------
+            sq.save("dim_customer")                
+            sq.save("dim_customer", "2025-01-31")   
+        """
         if getattr(self, 'bucket_config', None) is None:
             raise Exception("Please config `osd_config` before .save()")
-
-        df_output = self.output()
+            
+        # df_output = self.output()
+        df_report = self.report(table_name=table_name, date_str=date_str)
+        df_dirty_report = self.dirty_report()
+         
+         # Generate metrics report depending on state
+        # df_report = self._generate_metrics_report(df_output, table_name, date_str)
 
         base_path = f"{self.bucket_config.get('bucket', '')}/{self.config.get('state')}"
         date_str = date_str if date_str is not None else datetime.datetime.now().strftime('%Y-%m-%d')
         
         # Save output table
-        output_path = f"{base_path}/{table_name}/{date_str}.parquet"
-        print(f"\t saving transformed data to {output_path}")
-        df_output.to_parquet(
-            output_path,
-            filesystem=self.bucket,
-            engine='pyarrow'
-        )
-
-        # Generate metrics report depending on state
-        df_report = self._generate_metrics_report(df_output, table_name, date_str)
+        # output_path = f"{base_path}/{table_name}/{date_str}.parquet"
+        # print(f"\t saving transformed data to {output_path}")
+        # df_output.to_parquet(
+        #     output_path,
+        #     filesystem=self.bucket,
+        #     engine='pyarrow'
+        # )
 
         # Save report as Parquet
         report_path = f"{base_path}/_meta/{table_name}_{date_str}-report.parquet"
@@ -562,4 +580,13 @@ class Squishy:
             engine='pyarrow'
         )
 
+        # Save dirty report as Parquet
+        dirty_report_path = f"{base_path}/_dirty_report/{table_name}_{date_str}-dirty_report.parquet"
+        print(f"\t saving dirty report to {dirty_report_path}")
+        df_dirty_report.to_parquet(
+            dirty_report_path,
+            filesystem=self.bucket,
+            engine='pyarrow'
+        )
+        
         print("\t save done!")
