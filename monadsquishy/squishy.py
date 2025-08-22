@@ -1,7 +1,6 @@
 import os
 import json
 import datetime
-import json
 import pandas as pd
 from tqdm.auto import tqdm
 from typing import Dict, Any, Callable, List
@@ -365,7 +364,8 @@ class Squishy:
     def get_output_column(self, index=0):
         return self.config['transformations'][index]['out_columns']
     
-    def dirty_report(self, index=0):
+    def dirty_report(self, table_name: str, index=0, date_str=None):
+        date_now = pd.Timestamp(date_str, tz='UTC') if date_str else pd.Timestamp.now(tz='UTC')
         df_log = self.log(index)
         # Filter the dataframe for rows where 'is_passed' is False and in missing, invlid and inconsistent
         df_not_passed = df_log[
@@ -389,6 +389,8 @@ class Squishy:
         df = df_pivot_report[df_pivot_report['dirty_count'].notna()].copy()
         df = df[['input_column', 'output_column', 'input_value', 'dirty_count', 'dirty_status']]
         order = self.get_output_column(index)
+        df.insert(0, "name", table_name)
+        df = df.assign(timestamp=date_now)
         df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
         df_sorted = df.sort_values(by=['dirty_count'], ascending=False).reset_index(drop=True)
         return df_sorted
@@ -469,17 +471,17 @@ class Squishy:
 
         # Create the resulting DataFrame
         report_df = pd.DataFrame({
-            "Name": table_name,
-            "Field Name": fields,
-            "Total Rows": op_len,
-            "Missing": missing_data,
-            "Invalid": invalid_data,
-            "Inconsistent": inconsist_data,
-            "Clean": clean_data,
-            "Completeness": complete_percent,
-            "Validity": validation_percent,
-            "Consistency": consistency_percent,
-            "Timestamp": date_now,
+            "name": table_name,
+            "field_name": fields,
+            "total_rows": op_len,
+            "missing": missing_data,
+            "invalid": invalid_data,
+            "inconsistent": inconsist_data,
+            "clean": clean_data,
+            "completeness": complete_percent,
+            "validity": validation_percent,
+            "consistency": consistency_percent,
+            "timestamp": date_now,
         }).reset_index(drop=True)
         
         return report_df
@@ -551,25 +553,12 @@ class Squishy:
         """
         if getattr(self, 'bucket_config', None) is None:
             raise Exception("Please config `osd_config` before .save()")
-            
-        # df_output = self.output()
+             
         df_report = self.report(table_name=table_name, date_str=date_str)
-        df_dirty_report = self.dirty_report()
-         
-         # Generate metrics report depending on state
-        # df_report = self._generate_metrics_report(df_output, table_name, date_str)
-
+        df_dirty_report = self.dirty_report(table_name=table_name, date_str=date_str)
+          
         base_path = f"{self.bucket_config.get('bucket', '')}/{self.config.get('state')}"
-        date_str = date_str if date_str is not None else datetime.datetime.now().strftime('%Y-%m-%d')
-        
-        # Save output table
-        # output_path = f"{base_path}/{table_name}/{date_str}.parquet"
-        # print(f"\t saving transformed data to {output_path}")
-        # df_output.to_parquet(
-        #     output_path,
-        #     filesystem=self.bucket,
-        #     engine='pyarrow'
-        # )
+        date_str = date_str if date_str is not None else datetime.datetime.now().strftime('%Y-%m-%d ')
 
         # Save report as Parquet
         report_path = f"{base_path}/_meta/{table_name}_{date_str}-report.parquet"
