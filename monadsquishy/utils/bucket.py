@@ -1,4 +1,5 @@
 import s3fs
+import asyncio
 
 class CustomS3filesystem(s3fs.S3FileSystem):
 
