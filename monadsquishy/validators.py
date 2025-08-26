@@ -19,7 +19,11 @@ def completeness(func):
 def validity(func):
     @wraps(func)
     def wrapper(x, *args, **kwargs):
-        result = func(x, *args, **kwargs)  # convention: returns x if valid, else None
+        try:
+            result = func(x, *args, **kwargs)  # convention: returns x if valid, else None
+        except Exception:
+            return x
+        
         if result:
             raise Exception(utils.status.VALID)
         return x
@@ -29,7 +33,11 @@ def validity(func):
 def consistency(func):
     @wraps(func)
     def wrapper(x, *args, **kwargs):
-        result = func(x, *args, **kwargs)
+        try:
+            result = func(x, *args, **kwargs)
+        except Exception:
+            raise CustomException(x, utils.status.INCONSISTENT)
+        
         if result:
             return result
         raise CustomException(x, utils.status.INCONSISTENT)
