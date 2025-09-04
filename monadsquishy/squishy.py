@@ -23,14 +23,16 @@ class Monad:
         self.dtype = object
 
     def __or__(self, func):
-        if self.status not in ("dirty", "fixed"):
+        if self.status == 'passed':
             return self
         try:
-            # Short-circuit if last step already fixed
+            # Check if already fixed, if so, skip re-fixing
             if self.status == 'fixed':
                 self.status = 'dirty'
-                return self
+                if getattr(func, "decorator_name", None) in ('fixed', 'not_fixed'):
+                    return self
             
+            # Apply the function
             self.input.append(self.value)
             x = func(self.value)
             self.value = x
@@ -291,6 +293,7 @@ class Squishy:
                     _df_out_col.append(out_col)
                     # if funcs[-1].decorator_name != 'passed': # Check last function is not consistency auto add end function
                     if not funcs or getattr(funcs[-1], "decorator_name", None) != "passed":
+                        print(funcs[-1].decorator_name)
                         def end(x):
                             return x
                         funcs.append(end)
@@ -379,13 +382,9 @@ class Squishy:
             values='is_passed',  # The value to aggregate
             index=['input_column', 'output_column', 'input_value', 'quality_status'],  # Grouping columns
             aggfunc='count',  # Aggregate function to count occurrences
-            # dropna=False,  # Do not drop missing values
-            # fill_value=None  # Use NaN when there are no values
         ).reset_index().rename(columns={'is_passed': 'dirty_count', 'quality_status': 'dirty_status'})
 
         # Renaming the columns for clarity
-        # df_pivot_report.columns = ['input_column', 'output_column', 'input_value', 'dirty_status', 'dirty_count']
-        # df_pivot_report = df_pivot_report.sort_values(['out_column','dirty_count'], ascending=False)
         df = df_pivot_report[df_pivot_report['dirty_count'].notna()].copy()
         df = df[['input_column', 'output_column', 'input_value', 'dirty_count', 'dirty_status']]
         order = self.get_output_column(index)
@@ -406,8 +405,6 @@ class Squishy:
             values='is_passed',  # The value to aggregate
             index=['input_column', 'output_column', 'output_value'],  # Grouping columns
             aggfunc='count',  # Aggregate function to count occurrences
-            # dropna=False,  # Do not drop missing values
-            # fill_value=None  # Use NaN when there are no values
         ).reset_index()
 
         # Renaming the columns for clarity
@@ -486,6 +483,22 @@ class Squishy:
         
         return report_df
 
+    def summerize_report(self, df_report: pd.DataFrame) -> pd.DataFrame:
+        """
+        Summarizes the detailed quality report into a single-row summary.
+        The summary includes overall completeness, validity, and consistency percentages.
+        """
+        summary = {
+            "name": df_report['name'].iloc[0],
+            "total_fields": len(df_report),
+            "total_rows": df_report['total_rows'].iloc[0],
+            "completeness": round(df_report['completeness'].mean(), 2),
+            "validity": round(df_report['validity'].mean(), 2),
+            "consistency": round(df_report['consistency'].mean(), 2),
+            "timestamp": df_report['timestamp'].iloc[0],
+        }
+        return pd.DataFrame([summary])
+    
     def _generate_metrics_report(self, df: pd.DataFrame, table_name: str, date_str=None) -> pd.DataFrame:
         """
         Generates a summary metrics report by delegating calculations to the

@@ -10,7 +10,7 @@ def completeness(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
-        if result:
+        if result is not None:
             raise Exception(utils.status.NOT_MISSING)
         return None
     wrapper.decorator_name = "missing"
@@ -53,7 +53,7 @@ def fix(func):
             wrapper.decorator_name = "not_fixed"
             raise CustomException(x, utils.status.NOT_FIXED)  
 
-        if result:
+        if result is not None:
             wrapper.decorator_name = "fixed"
             raise CustomException(result, utils.status.FIXED)
         wrapper.decorator_name = "not_fixed"
