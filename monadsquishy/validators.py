@@ -24,7 +24,7 @@ def validity(func):
         except Exception:
             return x
         
-        if result:
+        if result is not None:
             raise Exception(utils.status.VALID)
         return x
     wrapper.decorator_name = "invalid"
