@@ -293,7 +293,6 @@ class Squishy:
                     _df_out_col.append(out_col)
                     # if funcs[-1].decorator_name != 'passed': # Check last function is not consistency auto add end function
                     if not funcs or getattr(funcs[-1], "decorator_name", None) != "passed":
-                        print(funcs[-1].decorator_name)
                         def end(x):
                             return x
                         funcs.append(end)
