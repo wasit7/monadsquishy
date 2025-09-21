@@ -366,33 +366,44 @@ class Squishy:
     def get_output_column(self, index=0):
         return self.config['transformations'][index]['out_columns']
     
-    def dirty_report(self, table_name: str, index=0, date_str=None):
-        date_now = pd.Timestamp(date_str, tz='UTC') if date_str else pd.Timestamp.now(tz='UTC')
+    def dirty_report(self, table_name: str, index: int = 0, date_str: str | None = None):
+        date_now = pd.Timestamp(date_str, tz="UTC") if date_str else pd.Timestamp.now(tz="UTC")
         df_log = self.log(index)
-        # Filter the dataframe for rows where 'is_passed' is False and in missing, invlid and inconsistent
-        df_not_passed = df_log[
-            (df_log['is_passed'] == False) &  # noqa: E712
-            (df_log['quality_status'].isin(['missing', 'invalid', 'inconsistent']))
-        ]
 
-        # Create the pivot table to count occurrences of failed rows
-        df_pivot_report = pd.pivot_table(
-            df_not_passed,
-            values='is_passed',  # The value to aggregate
-            index=['input_column', 'output_column', 'input_value', 'quality_status'],  # Grouping columns
-            aggfunc='count',  # Aggregate function to count occurrences
-        ).reset_index().rename(columns={'is_passed': 'dirty_count', 'quality_status': 'dirty_status'})
+        needed = ["is_passed", "quality_status", "input_column", "output_column", "input_value"]
+        df_log = df_log[needed].copy()
 
-        # Renaming the columns for clarity
-        df = df_pivot_report[df_pivot_report['dirty_count'].notna()].copy()
-        df = df[['input_column', 'output_column', 'input_value', 'dirty_count', 'dirty_status']]
-        order = self.get_output_column(index)
+        bad_status = {"missing", "invalid", "inconsistent"}
+        mask = (~df_log["is_passed"]) & (df_log["quality_status"].isin(bad_status))
+        df_not_passed = df_log.loc[mask, ["input_column", "output_column", "input_value", "quality_status"]]
+
+        order = self.get_output_column(index)  # expected output column order
+        if df_not_passed.empty:
+            return pd.DataFrame({
+                "name": pd.Series([], dtype="object"),
+                "input_column": pd.Series([], dtype="object"),
+                "output_column": pd.Categorical([], categories=order, ordered=True),
+                "input_value": pd.Series([], dtype="object"),
+                "dirty_count": pd.Series([], dtype="int64"),
+                "dirty_status": pd.Series([], dtype="object"),
+                "timestamp": pd.Series([], dtype="datetime64[ns, UTC]"),
+            })
+
+        df_counts = (
+            df_not_passed
+            .groupby(["input_column", "output_column", "input_value", "quality_status"], dropna=False)
+            .size()
+            .rename("dirty_count")
+            .reset_index()
+            .rename(columns={"quality_status": "dirty_status"})
+        )
+        df = df_counts[["input_column", "output_column", "input_value", "dirty_count", "dirty_status"]].copy()
         df.insert(0, "name", table_name)
-        df = df.assign(timestamp=date_now)
-        df['output_column'] = pd.Categorical(df['output_column'], categories=order, ordered=True)
-        df_sorted = df.sort_values(by=['dirty_count'], ascending=False).reset_index(drop=True)
+        df["timestamp"] = date_now
+        df["output_column"] = pd.Categorical(df["output_column"], categories=order, ordered=True)
+        df_sorted = df.sort_values(by=["dirty_count", "output_column"], ascending=[False, True]).reset_index(drop=True)
         return df_sorted
-
+    
     def clean_report(self, index=0):
         df_log = self.log(index)
         # Filter the dataframe for rows where 'is_passed' is True
