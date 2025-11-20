@@ -73,7 +73,7 @@ Logic is decomposed into atomic units adhering strictly to the **Single Responsi
 While the Monad handles atomic state, the **Squishy Engine** serves as the orchestration layer, managing execution across high-volume datasets using two key strategies to ensure scalability:
 
 1.  **Parallel Execution:** The engine bypasses the Python Global Interpreter Lock (GIL) via `pandarallel`. It implements a scatter-gather architecture that partitions the DataFrame based on available CPU cores, serializes the Monadic logic, and executes transformations in true parallel processes.
-2.  **Dual Observability (Tuple-Unpacking):** Standard map functions return a single value. The Squishy Engine's internal processor returns a composite data structure, segregating the **Signal** (The clean Silver Layer DataFrame for analysts) from the **Noise** (The Control Plane Logs for engineers). This ensures analytics tables remain pristine while engineers retain full visibility into data attrition.
+2.  **Dual Observability (Tuple-Unpacking):** Standard map functions return a single value. The Squishy Engine internal processor returns a composite data structure, segregating the **Signal** (The clean Silver Layer DataFrame for analysts) from the **Noise** (The Control Plane Logs for engineers). This ensures analytics tables remain pristine while engineers retain full visibility into data attrition.
 
 -----
 
@@ -158,7 +158,7 @@ def parse_currency(v):
 ### III. Efficiency Score (E-Score)
 
 The E-Score quantifies the computational efficiency of a transformer.
-$$ E = \frac{Successes (S)}{Total Rows (T)} $$
+$ E = \frac{Successes (S)}{Total Rows (T)} $
 
 **Example:**
 
