@@ -1,5 +1,7 @@
 # MonadSquishy: DEDE Thailand Data Lakehouse Pipeline
 
+<img src="1000031707.jpeg" width="50%" />
+
 ## 1. Background & Problem Statement
 
 The Department of Alternative Energy Development and Efficiency (DEDE) manages critical energy data for Thailand. However, the data ingestion process currently faces a significant bottleneck known as the **"Silver Layer Gap."** This gap represents the difficult transition from raw, unstructured user uploads (Bronze Layer) to a strict, schema-enforced Data Warehouse (Silver Layer).
